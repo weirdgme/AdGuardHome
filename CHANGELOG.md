@@ -27,6 +27,8 @@ and this project adheres to
 
 ### Changed
 
+- ARP-based client's information source now uses fallback implementations
+  ([#3597]).
 - Domain-specific private reverse DNS upstream servers are now validated to
   allow only `*.in-addr.arpa` and `*.ip6.arpa` domains pointing to
   locally-served networks ([#3381]).  **Note:**  If you already have invalid
@@ -86,6 +88,7 @@ In this release, the schema version has changed from 12 to 13.
 [#3367]: https://github.com/AdguardTeam/AdGuardHome/issues/3367
 [#3381]: https://github.com/AdguardTeam/AdGuardHome/issues/3381
 [#3503]: https://github.com/AdguardTeam/AdGuardHome/issues/3503
+[#3597]: https://github.com/AdguardTeam/AdGuardHome/issues/3597
 [#3978]: https://github.com/AdguardTeam/AdGuardHome/issues/3978
 [#4166]: https://github.com/AdguardTeam/AdGuardHome/issues/4166
 [#4213]: https://github.com/AdguardTeam/AdGuardHome/issues/4213

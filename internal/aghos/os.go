@@ -66,7 +66,7 @@ func RunCommand(command string, arguments ...string) (int, string, error) {
 	if errors.As(err, new(*exec.ExitError)) {
 		return cmd.ProcessState.ExitCode(), string(out), nil
 	} else if err != nil {
-		return 1, "", fmt.Errorf("exec.Command(%s) failed: %w: %s", command, err, string(out))
+		return 1, "", fmt.Errorf("command %q failed: %w: %s", command, err, string(out))
 	}
 
 	return cmd.ProcessState.ExitCode(), string(out), nil
