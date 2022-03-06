@@ -38,7 +38,7 @@ func newARPDB() (arp *compARPDB) {
 		// Try "arp -a" then.
 		&cmdARPDB{parse: parseArpAFunc, runcmd: rcArpA, ns: ns},
 		// Try "ip neigh" finally.
-		&cmdARPDB{parse: parseIpNeigh, runcmd: rcIpNeigh, ns: ns},
+		&cmdARPDB{parse: parseIPNeigh, runcmd: rcIPNeigh, ns: ns},
 	)
 }
 
@@ -77,14 +77,9 @@ func (arp *fsysARPDB) Refresh() (err error) {
 		}
 
 		n := Neighbor{}
-
-		n.IP = net.ParseIP(fields[0])
-		if n.IP == nil {
+		if n.IP = net.ParseIP(fields[0]); n.IP == nil {
 			continue
-		}
-
-		n.MAC, err = net.ParseMAC(fields[3])
-		if err != nil {
+		} else if n.MAC, err = net.ParseMAC(fields[3]); err != nil {
 			continue
 		}
 
@@ -124,9 +119,7 @@ func parseArpAWrt(sc *bufio.Scanner, lenHint int) (ns []Neighbor) {
 
 		n := Neighbor{}
 
-		if ipStr := fields[0]; len(ipStr) < 2 {
-			continue
-		} else if ip := net.ParseIP(ipStr[1 : len(ipStr)-1]); ip == nil {
+		if ip := net.ParseIP(fields[0]); ip == nil {
 			continue
 		} else {
 			n.IP = ip
@@ -194,17 +187,17 @@ func parseArpA(sc *bufio.Scanner, lenHint int) (ns []Neighbor) {
 	return ns
 }
 
-// rcIpNeigh runs "ip neigh".
-func rcIpNeigh() (r io.Reader, err error) {
+// rcIPNeigh runs "ip neigh".
+func rcIPNeigh() (r io.Reader, err error) {
 	return rc("ip", "neigh")
 }
 
-// parseIpNeigh parses the output of the "ip neigh" command on Linux.  The
+// parseIPNeigh parses the output of the "ip neigh" command on Linux.  The
 // expected input format:
 //
 //   192.168.1.1 dev enp0s3 lladdr ab:cd:ef:ab:cd:ef REACHABLE
 //
-func parseIpNeigh(sc *bufio.Scanner, lenHint int) (ns []Neighbor) {
+func parseIPNeigh(sc *bufio.Scanner, lenHint int) (ns []Neighbor) {
 	ns = make([]Neighbor, 0, lenHint)
 	for sc.Scan() {
 		ln := sc.Text()

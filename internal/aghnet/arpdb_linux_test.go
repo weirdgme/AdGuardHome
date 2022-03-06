@@ -70,7 +70,7 @@ func TestCmdARPDB_arpawrt(t *testing.T) {
 
 func TestCmdARPDB_ipneigh(t *testing.T) {
 	a := &cmdARPDB{
-		parse:  parseIpNeigh,
+		parse:  parseIPNeigh,
 		runcmd: func() (r io.Reader, err error) { return strings.NewReader(ipNeighOutput), nil },
 		ns: &neighs{
 			mu: &sync.RWMutex{},

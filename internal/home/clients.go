@@ -96,6 +96,7 @@ type clientsContainer struct {
 	// hosts database.
 	etcHosts *aghnet.HostsContainer
 
+	// arpdb stores the neighbors retrieved from ARP.
 	arpdb aghnet.ARPDB
 
 	testing bool // if TRUE, this object is used for internal tests
