@@ -13,12 +13,12 @@ import (
 	"github.com/AdguardTeam/golibs/netutil"
 )
 
-// ARPDB
+// ARPDB: The Network Neighborhood Database
 
-// ARPDB stores and refreshes the network neighborhood reported by ARP.
+// ARPDB stores and refreshes the network neighborhood reported by ARP (Address
+// Resolution Protocol).
 type ARPDB interface {
-	// Refresh tries to update the stored data.  It must be safe for concurrent
-	// use.
+	// Refresh updates the stored data.  It must be safe for concurrent use.
 	Refresh() (err error)
 
 	// Neighbors returnes the last set of data reported by ARP.  Both the method
@@ -46,10 +46,12 @@ type EmptyARPDB struct{}
 // type check
 var _ ARPDB = EmptyARPDB{}
 
-// Refresh implements the ARPDB interface for EmptyARPContainer.
+// Refresh implements the ARPDB interface for EmptyARPContainer.  It does
+// nothing and always returns nil error.
 func (EmptyARPDB) Refresh() (err error) { return nil }
 
-// Neighbors implements the ARPDB interface for EmptyARPContainer.
+// Neighbors implements the ARPDB interface for EmptyARPContainer.  It always
+// returns nil.
 func (EmptyARPDB) Neighbors() (ns []Neighbor) { return nil }
 
 // ARPDB Helper Types
@@ -116,27 +118,27 @@ func (ns *neighs) reset(with []Neighbor) {
 
 // Command ARPDB
 
-// parseF parses the text from sc as if it'd be an output of some ARP-related
+// parseFunc parses the text from sc as if it'd be an output of some ARP-related
 // command.  lenHint is a hint for the size of the allocated slice of Neighbors.
-type parseF func(sc *bufio.Scanner, lenHint int) (ns []Neighbor)
+type parseFunc func(sc *bufio.Scanner, lenHint int) (ns []Neighbor)
 
-type runcmdF func() (r io.Reader, err error)
+type runcmdFunc func() (r io.Reader, err error)
 
 // cmdARPDB is the implementation of the ARPDB that uses command line to
 // retrieve data.
 type cmdARPDB struct {
-	parse  parseF
-	runcmd runcmdF
+	parse  parseFunc
+	runcmd runcmdFunc
 	ns     *neighs
 }
 
 // type check
 var _ ARPDB = (*cmdARPDB)(nil)
 
-// rc runs the cmd with it's args and returns the result wrapped with io.Reader.
-// The error is returned either if the exit code retured by command not equals 0
-// or the execution itself failed.
-func rc(cmd string, args ...string) (r io.Reader, err error) {
+// runCmd runs the cmd with it's args and returns the result wrapped to be an
+// io.Reader.  The error is returned either if the exit code retured by command
+// not equals 0 or the execution itself failed.
+func runCmd(cmd string, args ...string) (r io.Reader, err error) {
 	var code int
 	var out string
 	code, out, err = aghos.RunCommand(cmd, args...)
@@ -177,31 +179,37 @@ func (arp *cmdARPDB) Neighbors() (ns []Neighbor) {
 
 // Composite ARPDB
 
-// compARPDB is the ARPDB that combines several ARPDB implementations and
+// arpdbs is the ARPDB that combines several ARPDB implementations and
 // consequently switches between those.
-type compARPDB struct {
+type arpdbs struct {
+	// arps is the set of ARPDB implementations to range through.
 	arps []ARPDB
+	// last is the last succeeded ARPDB index.
 	last int
 }
 
-func newCompARPDB(arps ...ARPDB) (arp *compARPDB) {
-	return &compARPDB{
+func newARPDBs(arps ...ARPDB) (arp *arpdbs) {
+	return &arpdbs{
 		arps: arps,
 		last: 0,
 	}
 }
 
 // type check
-var _ ARPDB = (*compARPDB)(nil)
+var _ ARPDB = (*arpdbs)(nil)
 
-// Refresh implements the ARPDB interface for *compARPDB.
-func (arp *compARPDB) Refresh() (err error) {
-	l := len(arp.arps)
+// Refresh implements the ARPDB interface for *arpdbs.
+func (arp *arpdbs) Refresh() (err error) {
 	var errs []error
-	for i, last := 0, arp.last; i < l; i, last = i+1, (arp.last+1)%l {
-		err = arp.arps[last].Refresh()
+	l := len(arp.arps)
+	// Start from the last succeeded implementation.
+	for i := 0; i < l; i++ {
+		cur := (arp.last + i) % l
+		err = arp.arps[cur].Refresh()
 		if err == nil {
-			arp.last = last
+			// The succeeded implementation found so update the last succeeded
+			// index.
+			arp.last = cur
 
 			return nil
 		}
@@ -210,14 +218,14 @@ func (arp *compARPDB) Refresh() (err error) {
 	}
 
 	if len(errs) > 0 {
-		err = errors.List("all implementations failed", errs...)
+		err = errors.List("each arpdb failed", errs...)
 	}
 
 	return err
 }
 
-// Neighbors implements the ARPDB interface for *compARPDB.
-func (arp *compARPDB) Neighbors() (ns []Neighbor) {
+// Neighbors implements the ARPDB interface for *arpdbs.
+func (arp *arpdbs) Neighbors() (ns []Neighbor) {
 	if l := len(arp.arps); l > 0 && arp.last < l {
 		return arp.arps[arp.last].Neighbors()
 	}

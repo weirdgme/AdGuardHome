@@ -27,7 +27,7 @@ and this project adheres to
 
 ### Changed
 
-- ARP-based client's information source now uses fallback implementations
+- Improved detection of runtime clients through more resilient ARP processing
   ([#3597]).
 - Domain-specific private reverse DNS upstream servers are now validated to
   allow only `*.in-addr.arpa` and `*.ip6.arpa` domains pointing to

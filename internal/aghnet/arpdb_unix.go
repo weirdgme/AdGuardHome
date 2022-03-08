@@ -9,5 +9,5 @@ import (
 
 // rcArpA runs "arp -a".
 func rcArpA() (r io.Reader, err error) {
-	return rc("arp", "-a")
+	return runCmd("arp", "-a")
 }

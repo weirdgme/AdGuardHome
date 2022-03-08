@@ -24,7 +24,7 @@ func newARPDB() *cmdARPDB {
 
 // rcArpA runs "arp /a".
 func rcArpA() (r io.Reader, err error) {
-	return rc("arp", "/a")
+	return runCmd("arp", "/a")
 }
 
 // parseArpA parses the output of the "arp /a" command on Windows.  The expected

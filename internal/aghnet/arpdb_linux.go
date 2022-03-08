@@ -18,25 +18,25 @@ import (
 	"github.com/AdguardTeam/golibs/stringutil"
 )
 
-func newARPDB() (arp *compARPDB) {
+func newARPDB() (arp *arpdbs) {
 	// Use the common storage among the implementations.
 	ns := &neighs{
 		mu: &sync.RWMutex{},
 		ns: make([]Neighbor, 0),
 	}
 
-	var parseArpAFunc parseF
+	var parseF parseFunc
 	if aghos.IsOpenWrt() {
-		parseArpAFunc = parseArpAWrt
+		parseF = parseArpAWrt
 	} else {
-		parseArpAFunc = parseArpA
+		parseF = parseArpA
 	}
 
-	return newCompARPDB(
+	return newARPDBs(
 		// Try /proc/net/arp first.
 		&fsysARPDB{ns: ns, fsys: aghos.RootDirFS(), filename: "proc/net/arp"},
 		// Try "arp -a" then.
-		&cmdARPDB{parse: parseArpAFunc, runcmd: rcArpA, ns: ns},
+		&cmdARPDB{parse: parseF, runcmd: rcArpA, ns: ns},
 		// Try "ip neigh" finally.
 		&cmdARPDB{parse: parseIPNeigh, runcmd: rcIPNeigh, ns: ns},
 	)
@@ -189,7 +189,7 @@ func parseArpA(sc *bufio.Scanner, lenHint int) (ns []Neighbor) {
 
 // rcIPNeigh runs "ip neigh".
 func rcIPNeigh() (r io.Reader, err error) {
-	return rc("ip", "neigh")
+	return runCmd("ip", "neigh")
 }
 
 // parseIPNeigh parses the output of the "ip neigh" command on Linux.  The

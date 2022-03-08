@@ -29,7 +29,7 @@ func (arp *TestARPDB) Neighbors() (ns []Neighbor) {
 	return arp.OnNeighbors()
 }
 
-func TestCompARPDB(t *testing.T) {
+func TestARPDBS(t *testing.T) {
 	knownIP := net.IP{1, 2, 3, 4}
 	knownMAC := net.HardwareAddr{0xAB, 0xCD, 0xEF, 0xAB, 0xCD, 0xEF}
 
@@ -52,7 +52,7 @@ func TestCompARPDB(t *testing.T) {
 	t.Run("begin_with_success", func(t *testing.T) {
 		t.Cleanup(clnp)
 
-		a := newCompARPDB(succDB, failDB)
+		a := newARPDBs(succDB, failDB)
 		err := a.Refresh()
 		require.NoError(t, err)
 
@@ -64,7 +64,7 @@ func TestCompARPDB(t *testing.T) {
 	t.Run("begin_with_fail", func(t *testing.T) {
 		t.Cleanup(clnp)
 
-		a := newCompARPDB(failDB, succDB)
+		a := newARPDBs(failDB, succDB)
 		err := a.Refresh()
 		require.NoError(t, err)
 
@@ -76,10 +76,9 @@ func TestCompARPDB(t *testing.T) {
 	t.Run("fail_only", func(t *testing.T) {
 		t.Cleanup(clnp)
 
-		wantMsg := `all implementations failed: 2 errors: ` +
-			`"refresh failed", "refresh failed"`
+		wantMsg := `each arpdb failed: 2 errors: "refresh failed", "refresh failed"`
 
-		a := newCompARPDB(failDB, failDB)
+		a := newARPDBs(failDB, failDB)
 		err := a.Refresh()
 		require.Error(t, err)
 
@@ -110,7 +109,7 @@ func TestCompARPDB(t *testing.T) {
 				return succDB.OnNeighbors()
 			},
 		}
-		a := newCompARPDB(unstableDB, succDB)
+		a := newARPDBs(unstableDB, succDB)
 
 		// Unstable ARPDB should refresh successfully.
 		err := a.Refresh()
@@ -135,7 +134,7 @@ func TestCompARPDB(t *testing.T) {
 	})
 
 	t.Run("empty", func(t *testing.T) {
-		a := newCompARPDB()
+		a := newARPDBs()
 		require.NoError(t, a.Refresh())
 
 		assert.Empty(t, a.Neighbors())

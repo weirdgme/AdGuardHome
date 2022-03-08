@@ -296,8 +296,7 @@ func setupConfig(args options) (err error) {
 	var arpdb aghnet.ARPDB
 	arpdb, err = aghnet.NewARPDB()
 	if err != nil {
-		// TODO(e.burkov):  !! is that ok?
-		log.Info("creating arp container: %s; using stub", err)
+		log.Info("warning: creating arpdb: %s; using stub", err)
 
 		arpdb = aghnet.EmptyARPDB{}
 	}

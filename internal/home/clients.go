@@ -810,7 +810,7 @@ func (clients *clientsContainer) addFromHostsFile(hosts *netutil.IPMap) {
 // command.
 func (clients *clientsContainer) addFromSystemARP() {
 	if err := clients.arpdb.Refresh(); err != nil {
-		log.Debug("refreshing arp container: %s", err)
+		log.Error("refreshing arp container: %s", err)
 
 		clients.arpdb = aghnet.EmptyARPDB{}
 
@@ -837,7 +837,7 @@ func (clients *clientsContainer) addFromSystemARP() {
 		}
 	}
 
-	log.Debug("clients: added %d client aliases from ARP", added)
+	log.Debug("clients: added %d client aliases from arp neighborhood", added)
 }
 
 // updateFromDHCP adds the clients that have a non-empty hostname from the DHCP
