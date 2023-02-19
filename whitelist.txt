@@ -1,3 +1,6 @@
+#blacklist
+||pubsub.pubnub.com^$important
+
 #allowlist
 @@||checkip.amazonaws.com^$important
 @@||www.govconuniversity.com^$important
