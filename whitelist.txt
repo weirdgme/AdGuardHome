@@ -1,4 +1,5 @@
 #allowlist
+@@||time.apple.com
 @@||docs.aws.amazon.com^$important
 @@||amazonwebservicesinc.tt.omtrdc.net^$important
 @@||s0.awsstatic.com^$important
