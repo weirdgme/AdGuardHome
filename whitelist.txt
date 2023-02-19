@@ -1,4 +1,8 @@
 #allowlist
+@@||*.apple.com^$important
+@@||*.icloud.com^$important
+@@||setup.icloud.com^$important
+# @@||gateway.fe.apple-dns.net^$important
 @@||cvws.icloud-content.com^$important
 @@||time.apple.com
 @@||docs.aws.amazon.com^$important
