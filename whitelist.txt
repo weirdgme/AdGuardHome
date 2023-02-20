@@ -1,4 +1,13 @@
 #allowlist
+@@||apps.mzstatic.com^$important
+@@||s.mzstatic.com^$important
+@@||*.apple.com^$important
+@@||*.icloud.com^$important
+@@||setup.icloud.com^$important
+# @@||gateway.fe.apple-dns.net^$important
+@@||cvws.icloud-content.com^$important
+@@||time.apple.com
+#
 @@||amzn.to^$important
 @@||www.amazon.co.uk^$important
 @@||unagi.amazon.co.uk^$important
@@ -6,17 +15,7 @@
 @@||ipv6.unagi-na.amazon.com^$important
 @@||unagi-na.amazon.com^$important
 @@||www.amazon.jobs^$important
-@@||r.bing.com^$important
-@@||smallpdf-production-files.s3-accelerate.amazonaws.com^$important
-@@||smallpdf-production-files.s3.eu-west-1.amazonaws.com^$important
 @@||*.amazonaws.com^$important
-
-@@||*.apple.com^$important
-@@||*.icloud.com^$important
-@@||setup.icloud.com^$important
-# @@||gateway.fe.apple-dns.net^$important
-@@||cvws.icloud-content.com^$important
-@@||time.apple.com
 @@||docs.aws.amazon.com^$important
 @@||amazonwebservicesinc.tt.omtrdc.net^$important
 @@||s0.awsstatic.com^$important
@@ -26,6 +25,11 @@
 @@||*.aws.amazon.com^$important
 @@||*.signin.aws.amazon.com^$important
 @@||checkip.amazonaws.com^$important
+#
+@@||r.bing.com^$important
+@@||smallpdf-production-files.s3-accelerate.amazonaws.com^$important
+@@||smallpdf-production-files.s3.eu-west-1.amazonaws.com^$important
+#
 @@||www.govconuniversity.com^$important
 @@||login.verizonsmallbusinessessentials.com^$important
 @@||hosting.verizonsmallbusinessessentials.com^$important
