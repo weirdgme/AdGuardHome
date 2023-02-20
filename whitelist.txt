@@ -1,4 +1,16 @@
 #allowlist
+@@||amzn.to^$important
+@@||www.amazon.co.uk^$important
+@@||unagi.amazon.co.uk^$important
+@@||unagi-eu.amazon.com^$important
+@@||ipv6.unagi-na.amazon.com^$important
+@@||unagi-na.amazon.com^$important
+@@||www.amazon.jobs^$important
+@@||r.bing.com^$important
+@@||smallpdf-production-files.s3-accelerate.amazonaws.com^$important
+@@||smallpdf-production-files.s3.eu-west-1.amazonaws.com^$important
+@@||*.amazonaws.com^$important
+
 @@||*.apple.com^$important
 @@||*.icloud.com^$important
 @@||setup.icloud.com^$important
