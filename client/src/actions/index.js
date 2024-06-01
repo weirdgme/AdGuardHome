@@ -6,7 +6,14 @@ import endsWith from 'lodash/endsWith';
 import escapeRegExp from 'lodash/escapeRegExp';
 import React from 'react';
 import { compose } from 'redux';
-import { splitByNewLine, sortClients, filterOutComments } from '../helpers/helpers';
+import {
+    splitByNewLine,
+    sortClients,
+    filterOutComments,
+    msToSeconds,
+    msToMinutes,
+    msToHours,
+} from '../helpers/helpers';
 import {
     BLOCK_ACTIONS,
     CHECK_TIMEOUT,
@@ -14,6 +21,7 @@ import {
     SETTINGS_NAMES,
     FORM_NAME,
     MANUAL_UPDATE_LINK,
+    DISABLE_PROTECTION_TIMINGS,
 } from '../helpers/constants';
 import { areEqualVersions } from '../helpers/version';
 import { getTlsStatus } from './encryption';
@@ -24,6 +32,12 @@ import { getFilteringStatus, setRules } from './filtering';
 export const toggleSettingStatus = createAction('SETTING_STATUS_TOGGLE');
 export const showSettingsFailure = createAction('SETTINGS_FAILURE_SHOW');
 
+/**
+ *
+ * @param {*} settingKey = SETTINGS_NAMES
+ * @param {*} status: boolean | SafeSearchConfig
+ * @returns
+ */
 export const toggleSetting = (settingKey, status) => async (dispatch) => {
     let successMessage = '';
     try {
@@ -49,14 +63,9 @@ export const toggleSetting = (settingKey, status) => async (dispatch) => {
                 dispatch(toggleSettingStatus({ settingKey }));
                 break;
             case SETTINGS_NAMES.safesearch:
-                if (status) {
-                    successMessage = 'disabled_safe_search_toast';
-                    await apiClient.disableSafesearch();
-                } else {
-                    successMessage = 'enabled_save_search_toast';
-                    await apiClient.enableSafesearch();
-                }
-                dispatch(toggleSettingStatus({ settingKey }));
+                successMessage = 'updated_save_search_toast';
+                await apiClient.updateSafesearch(status);
+                dispatch(toggleSettingStatus({ settingKey, value: status }));
                 break;
             default:
                 break;
@@ -71,7 +80,9 @@ export const initSettingsRequest = createAction('SETTINGS_INIT_REQUEST');
 export const initSettingsFailure = createAction('SETTINGS_INIT_FAILURE');
 export const initSettingsSuccess = createAction('SETTINGS_INIT_SUCCESS');
 
-export const initSettings = (settingsList) => async (dispatch) => {
+export const initSettings = (settingsList = {
+    safebrowsing: {}, parental: {},
+}) => async (dispatch) => {
     dispatch(initSettingsRequest());
     try {
         const safebrowsingStatus = await apiClient.getSafebrowsingStatus();
@@ -80,7 +91,6 @@ export const initSettings = (settingsList) => async (dispatch) => {
         const {
             safebrowsing,
             parental,
-            safesearch,
         } = settingsList;
         const newSettingsList = {
             safebrowsing: {
@@ -92,8 +102,7 @@ export const initSettings = (settingsList) => async (dispatch) => {
                 enabled: parentalStatus.enabled,
             },
             safesearch: {
-                ...safesearch,
-                enabled: safesearchStatus.enabled,
+                ...safesearchStatus,
             },
         };
         dispatch(initSettingsSuccess({ settingsList: newSettingsList }));
@@ -107,17 +116,52 @@ export const toggleProtectionRequest = createAction('TOGGLE_PROTECTION_REQUEST')
 export const toggleProtectionFailure = createAction('TOGGLE_PROTECTION_FAILURE');
 export const toggleProtectionSuccess = createAction('TOGGLE_PROTECTION_SUCCESS');
 
-export const toggleProtection = (status) => async (dispatch) => {
+const getDisabledMessage = (time) => {
+    switch (time) {
+        case DISABLE_PROTECTION_TIMINGS.HALF_MINUTE:
+            return i18next.t(
+                'disable_notify_for_seconds',
+                { count: msToSeconds(DISABLE_PROTECTION_TIMINGS.HALF_MINUTE) },
+            );
+        case DISABLE_PROTECTION_TIMINGS.MINUTE:
+            return i18next.t(
+                'disable_notify_for_minutes',
+                { count: msToMinutes(DISABLE_PROTECTION_TIMINGS.MINUTE) },
+            );
+        case DISABLE_PROTECTION_TIMINGS.TEN_MINUTES:
+            return i18next.t(
+                'disable_notify_for_minutes',
+                { count: msToMinutes(DISABLE_PROTECTION_TIMINGS.TEN_MINUTES) },
+            );
+        case DISABLE_PROTECTION_TIMINGS.HOUR:
+            return i18next.t(
+                'disable_notify_for_hours',
+                { count: msToHours(DISABLE_PROTECTION_TIMINGS.HOUR) },
+            );
+        case DISABLE_PROTECTION_TIMINGS.TOMORROW:
+            return i18next.t('disable_notify_until_tomorrow');
+        default:
+            return 'disabled_protection';
+    }
+};
+
+export const toggleProtection = (status, time = null) => async (dispatch) => {
     dispatch(toggleProtectionRequest());
     try {
-        const successMessage = status ? 'disabled_protection' : 'enabled_protection';
-        await apiClient.setDnsConfig({ protection_enabled: !status });
+        const successMessage = status ? getDisabledMessage(time) : 'enabled_protection';
+        await apiClient.setProtection({ enabled: !status, duration: time });
         dispatch(addSuccessToast(successMessage));
-        dispatch(toggleProtectionSuccess());
+        dispatch(toggleProtectionSuccess({ disabledDuration: time }));
     } catch (error) {
         dispatch(addErrorToast({ error }));
         dispatch(toggleProtectionFailure());
     }
+};
+
+export const setDisableDurationTime = createAction('SET_DISABLED_DURATION_TIME');
+
+export const setProtectionTimerTime = (updatedTime) => async (dispatch) => {
+    dispatch(setDisableDurationTime({ timeToEnableProtection: updatedTime }));
 };
 
 export const getVersionRequest = createAction('GET_VERSION_REQUEST');
@@ -272,6 +316,9 @@ export const getDnsStatus = () => async (dispatch) => {
 
     const handleRequestSuccess = (response) => {
         const dnsStatus = response.data;
+        if (dnsStatus.protection_disabled_duration === 0) {
+            dnsStatus.protection_disabled_duration = null;
+        }
         const { running } = dnsStatus;
         const runningStatus = dnsStatus && running;
         if (runningStatus === true) {
@@ -291,12 +338,51 @@ export const getDnsStatus = () => async (dispatch) => {
     }
 };
 
+export const timerStatusRequest = createAction('TIMER_STATUS_REQUEST');
+export const timerStatusFailure = createAction('TIMER_STATUS_FAILURE');
+export const timerStatusSuccess = createAction('TIMER_STATUS_SUCCESS');
+
+export const getTimerStatus = () => async (dispatch) => {
+    dispatch(timerStatusRequest());
+
+    const handleRequestError = () => {
+        dispatch(addErrorToast({ error: 'dns_status_error' }));
+        dispatch(dnsStatusFailure());
+        window.location.reload(true);
+    };
+
+    const handleRequestSuccess = (response) => {
+        const dnsStatus = response.data;
+        if (dnsStatus.protection_disabled_duration === 0) {
+            dnsStatus.protection_disabled_duration = null;
+        }
+        const { running } = dnsStatus;
+        const runningStatus = dnsStatus && running;
+        if (runningStatus === true) {
+            dispatch(timerStatusSuccess(dnsStatus));
+        } else {
+            dispatch(setDnsRunningStatus(running));
+        }
+    };
+
+    try {
+        checkStatus(handleRequestSuccess, handleRequestError);
+    } catch (error) {
+        handleRequestError();
+    }
+};
+
 export const testUpstreamRequest = createAction('TEST_UPSTREAM_REQUEST');
 export const testUpstreamFailure = createAction('TEST_UPSTREAM_FAILURE');
 export const testUpstreamSuccess = createAction('TEST_UPSTREAM_SUCCESS');
 
 export const testUpstream = (
-    { bootstrap_dns, upstream_dns, local_ptr_upstreams }, upstream_dns_file,
+    {
+        bootstrap_dns,
+        upstream_dns,
+        local_ptr_upstreams,
+        fallback_dns,
+    }, upstream_dns_file,
 ) => async (dispatch) => {
     dispatch(testUpstreamRequest());
     try {
@@ -305,6 +391,7 @@ export const testUpstream = (
         const config = {
             bootstrap_dns: splitByNewLine(bootstrap_dns),
             private_upstream: splitByNewLine(local_ptr_upstreams),
+            fallback_dns: splitByNewLine(fallback_dns),
             ...(upstream_dns_file ? null : {
                 upstream_dns: removeComments(upstream_dns),
             }),
@@ -316,6 +403,11 @@ export const testUpstream = (
                 const message = upstreamResponse[key];
                 if (message.startsWith('WARNING:')) {
                     dispatch(addErrorToast({ error: i18next.t('dns_test_warning_toast', { key }) }));
+                } else if (message.endsWith(': parsing error')) {
+                    const info = message.substring(0, message.indexOf(':'));
+                    const [sectionKey, line] = info.split(' ');
+                    const section = i18next.t(sectionKey);
+                    dispatch(addErrorToast({ error: i18next.t('dns_test_parsing_error_toast', { section, line }) }));
                 } else if (message !== 'OK') {
                     dispatch(addErrorToast({ error: i18next.t('dns_test_not_ok_toast', { key }) }));
                 }
@@ -339,12 +431,14 @@ export const testUpstreamWithFormValues = () => async (dispatch, getState) => {
         bootstrap_dns,
         upstream_dns,
         local_ptr_upstreams,
+        fallback_dns,
     } = getState().form[FORM_NAME.UPSTREAM].values;
 
     return dispatch(testUpstream({
         bootstrap_dns,
         upstream_dns,
         local_ptr_upstreams,
+        fallback_dns,
     }, upstream_dns_file));
 };
 
@@ -602,6 +696,24 @@ export const removeStaticLease = (config) => async (dispatch) => {
     } catch (error) {
         dispatch(addErrorToast({ error }));
         dispatch(removeStaticLeaseFailure());
+    }
+};
+
+export const updateStaticLeaseRequest = createAction('UPDATE_STATIC_LEASE_REQUEST');
+export const updateStaticLeaseFailure = createAction('UPDATE_STATIC_LEASE_FAILURE');
+export const updateStaticLeaseSuccess = createAction('UPDATE_STATIC_LEASE_SUCCESS');
+
+export const updateStaticLease = (config) => async (dispatch) => {
+    dispatch(updateStaticLeaseRequest());
+    try {
+        await apiClient.updateStaticLease(config);
+        dispatch(updateStaticLeaseSuccess(config));
+        dispatch(addSuccessToast(i18next.t('dhcp_lease_updated', { key: config.hostname || config.ip })));
+        dispatch(toggleLeaseModal());
+        dispatch(getDhcpStatus());
+    } catch (error) {
+        dispatch(addErrorToast({ error }));
+        dispatch(updateStaticLeaseFailure());
     }
 };
 

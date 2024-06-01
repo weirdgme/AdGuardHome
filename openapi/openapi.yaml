@@ -94,6 +94,20 @@
       'responses':
         '200':
           'description': 'OK'
+  '/protection':
+    'post':
+      'tags':
+        - 'global'
+      'operationId': 'setProtection'
+      'summary': 'Set protection state and duration'
+      'requestBody':
+        'content':
+          'application/json':
+            'schema':
+              '$ref': '#/components/schemas/SetProtectionRequest'
+      'responses':
+        '200':
+          'description': 'OK'
   '/cache_clear':
     'post':
       'tags':
@@ -226,6 +240,14 @@
                 '$ref': '#/components/schemas/QueryLog'
   '/querylog_info':
     'get':
+      'deprecated': true
+      'description': |
+        Deprecated: Use `GET /querylog/config` instead.
+
+        NOTE: If `interval` was configured by editing configuration file or new
+        HTTP API call `PUT /querylog/config/update` and it's not equal to
+        previous allowed enum values then it will be equal to `90` days for
+        compatibility reasons.
       'tags':
       - 'log'
       'operationId': 'queryLogInfo'
@@ -239,6 +261,9 @@
                 '$ref': '#/components/schemas/QueryLogConfig'
   '/querylog_config':
     'post':
+      'deprecated': true
+      'description': >
+        Deprecated: Use `PUT /querylog/config/update` instead.
       'tags':
       - 'log'
       'operationId': 'queryLogConfig'
@@ -257,6 +282,34 @@
       - 'log'
       'operationId': 'querylogClear'
       'summary': 'Clear query log'
+      'responses':
+        '200':
+          'description': 'OK.'
+  '/querylog/config':
+    'get':
+      'tags':
+      - 'log'
+      'operationId': 'getQueryLogConfig'
+      'summary': 'Get query log parameters'
+      'responses':
+        '200':
+          'description': 'OK.'
+          'content':
+            'application/json':
+              'schema':
+                '$ref': '#/components/schemas/GetQueryLogConfigResponse'
+  '/querylog/config/update':
+    'put':
+      'tags':
+      - 'log'
+      'operationId': 'putQueryLogConfig'
+      'summary': 'Set query log parameters'
+      'requestBody':
+        'content':
+          'application/json':
+            'schema':
+              '$ref': '#/components/schemas/PutQueryLogConfigUpdateRequest'
+        'required': true
       'responses':
         '200':
           'description': 'OK.'
@@ -284,6 +337,14 @@
           'description': 'OK.'
   '/stats_info':
     'get':
+      'deprecated': true
+      'description': |
+        Deprecated: Use `GET /stats/config` instead.
+
+        NOTE: If `interval` was configured by editing configuration file or new
+        HTTP API call `PUT /stats/config/update` and it's not equal to
+        previous allowed enum values then it will be equal to `90` days for
+        compatibility reasons.
       'tags':
       - 'stats'
       'operationId': 'statsInfo'
@@ -297,6 +358,9 @@
                 '$ref': '#/components/schemas/StatsConfig'
   '/stats_config':
     'post':
+      'deprecated': true
+      'description': >
+        Deprecated: Use `PUT /stats/config/update` instead.
       'tags':
       - 'stats'
       'operationId': 'statsConfig'
@@ -306,6 +370,34 @@
           'application/json':
             'schema':
               '$ref': '#/components/schemas/StatsConfig'
+      'responses':
+        '200':
+          'description': 'OK.'
+  '/stats/config':
+    'get':
+      'tags':
+      - 'stats'
+      'operationId': 'getStatsConfig'
+      'summary': 'Get statistics parameters'
+      'responses':
+        '200':
+          'description': 'OK.'
+          'content':
+            'application/json':
+              'schema':
+                '$ref': '#/components/schemas/GetStatsConfigResponse'
+  '/stats/config/update':
+    'put':
+      'tags':
+      - 'stats'
+      'operationId': 'putStatsConfig'
+      'summary': 'Set statistics parameters'
+      'requestBody':
+        'content':
+          'application/json':
+            'schema':
+              '$ref': '#/components/schemas/PutStatsConfigUpdateRequest'
+        'required': true
       'responses':
         '200':
           'description': 'OK.'
@@ -463,6 +555,26 @@
       - 'dhcp'
       'operationId': 'dhcpRemoveStaticLease'
       'summary': 'Removes a static lease'
+      'requestBody':
+        '$ref': '#/components/requestBodies/DhcpStaticLease'
+      'responses':
+        '200':
+          'description': 'OK.'
+        '501':
+          'content':
+            'application/json':
+              'schema':
+                '$ref': '#/components/schemas/Error'
+          'description': 'Not implemented (for example, on Windows).'
+  '/dhcp/update_static_lease':
+    'post':
+      'tags':
+      - 'dhcp'
+      'operationId': 'dhcpUpdateStaticLease'
+      'description': >
+        Updates IP address, hostname of the static lease.  IP version must be
+        the same as previous.
+      'summary': 'Updates a static lease'
       'requestBody':
         '$ref': '#/components/requestBodies/DhcpStaticLease'
       'responses':
@@ -717,6 +829,7 @@
                     'sensitivity': 13
   '/safesearch/enable':
     'post':
+      'deprecated': true
       'tags':
       - 'safesearch'
       'operationId': 'safesearchEnable'
@@ -726,10 +839,25 @@
           'description': 'OK.'
   '/safesearch/disable':
     'post':
+      'deprecated': true
       'tags':
       - 'safesearch'
       'operationId': 'safesearchDisable'
       'summary': 'Disable safesearch'
+      'responses':
+        '200':
+          'description': 'OK.'
+  '/safesearch/settings':
+    'put':
+      'tags':
+        - 'safesearch'
+      'operationId': 'safesearchSettings'
+      'summary': 'Update safesearch settings'
+      'requestBody':
+        'content':
+          'application/json':
+            'schema':
+              '$ref': '#/components/schemas/SafeSearchConfig'
       'responses':
         '200':
           'description': 'OK.'
@@ -745,14 +873,7 @@
           'content':
             'application/json':
               'schema':
-                'type': 'object'
-                'properties':
-                  'enabled':
-                    'type': 'boolean'
-              'examples':
-                'response':
-                  'value':
-                    'enabled': false
+                '$ref': '#/components/schemas/SafeSearchConfig'
   '/clients':
     'get':
       'tags':
@@ -900,6 +1021,9 @@
                 '$ref': '#/components/schemas/BlockedServicesAll'
   '/blocked_services/list':
     'get':
+      'deprecated': true
+      'description': >
+        Deprecated: Use `GET /blocked_services/get` instead.
       'tags':
       - 'blocked_services'
       'operationId': 'blockedServicesList'
@@ -913,6 +1037,9 @@
                 '$ref': '#/components/schemas/BlockedServicesArray'
   '/blocked_services/set':
     'post':
+      'deprecated': true
+      'description': >
+        Deprecated: Use `PUT /blocked_services/update` instead.
       'tags':
       - 'blocked_services'
       'operationId': 'blockedServicesSet'
@@ -922,6 +1049,34 @@
           'application/json':
             'schema':
               '$ref': '#/components/schemas/BlockedServicesArray'
+      'responses':
+        '200':
+          'description': 'OK.'
+  '/blocked_services/get':
+    'get':
+      'tags':
+      - 'blocked_services'
+      'operationId': 'blockedServicesSchedule'
+      'summary': 'Get blocked services'
+      'responses':
+        '200':
+          'description': 'OK.'
+          'content':
+            'application/json':
+              'schema':
+                '$ref': '#/components/schemas/BlockedServicesSchedule'
+  '/blocked_services/update':
+    'put':
+      'tags':
+      - 'blocked_services'
+      'operationId': 'blockedServicesScheduleUpdate'
+      'summary': 'Update blocked services'
+      'requestBody':
+        'content':
+          'application/json':
+            'schema':
+              '$ref': '#/components/schemas/BlockedServicesSchedule'
+        'required': true
       'responses':
         '200':
           'description': 'OK.'
@@ -957,6 +1112,17 @@
       'summary': 'Remove a Rewrite rule'
       'requestBody':
         '$ref': '#/components/requestBodies/RewriteEntry'
+      'responses':
+        '200':
+          'description': 'OK.'
+  '/rewrite/update':
+    'put':
+      'tags':
+        - 'rewrite'
+      'operationId': 'rewriteUpdate'
+      'summary': 'Update a Rewrite rule'
+      'requestBody':
+        '$ref': '#/components/requestBodies/RewriteUpdate'
       'responses':
         '200':
           'description': 'OK.'
@@ -1210,6 +1376,12 @@
           'schema':
             '$ref': '#/components/schemas/RewriteEntry'
       'required': true
+    'RewriteUpdate':
+      'content':
+        'application/json':
+          'schema':
+            '$ref': '#/components/schemas/RewriteUpdate'
+      'required': true
   'schemas':
     'ServerStatus':
       'type': 'object'
@@ -1219,6 +1391,7 @@
       - 'dns_port'
       - 'http_port'
       - 'protection_enabled'
+      - 'protection_disabled_until'
       - 'running'
       - 'version'
       - 'language'
@@ -1242,6 +1415,9 @@
           'maximum': 65535
         'protection_enabled':
           'type': 'boolean'
+        'protection_disabled_duration':
+          'type': 'integer'
+          'format': 'int64'
         'dhcp_available':
           'type': 'boolean'
         'running':
@@ -1254,7 +1430,7 @@
           'example': 'en'
     'DNSConfig':
       'type': 'object'
-      'description': 'Query log configuration'
+      'description': 'DNS server configuration'
       'properties':
         'bootstrap_dns':
           'type': 'array'
@@ -1276,14 +1452,39 @@
           'example':
           - 'tls://1.1.1.1'
           - 'tls://1.0.0.1'
+        'fallback_dns':
+          'type': 'array'
+          'description': >
+            List of fallback DNS servers used when upstream DNS servers are not
+            responding.  Empty value will clear the list.
+          'items':
+            'type': 'string'
+          'example':
+          - '8.8.8.8'
+          - '1.1.1.1:53'
         'upstream_dns_file':
           'type': 'string'
         'protection_enabled':
           'type': 'boolean'
-        'dhcp_available':
-          'type': 'boolean'
         'ratelimit':
           'type': 'integer'
+        'ratelimit_subnet_subnet_len_ipv4':
+          'description': 'Length of the subnet mask for IPv4 addresses.'
+          'type': 'integer'
+          'default': 24
+          'minimum': 0
+          'maximum': 32
+        'ratelimit_subnet_subnet_len_ipv6':
+          'description': 'Length of the subnet mask for IPv6 addresses.'
+          'type': 'integer'
+          'default': 56
+          'minimum': 0
+          'maximum': 128
+        'ratelimit_whitelist':
+          'type': 'array'
+          'description': 'List of IP addresses excluded from rate limiting.'
+          'items':
+            'type': 'string'
         'blocking_mode':
           'type': 'string'
           'enum':
@@ -1296,8 +1497,20 @@
           'type': 'string'
         'blocking_ipv6':
           'type': 'string'
+        'blocked_response_ttl':
+          'type': 'integer'
+          'minimum': 0
+          'description': 'TTL for blocked responses.'
+        'protection_disabled_until':
+          'type': 'string'
+          'description': 'Protection is pause until this time.  Nullable.'
+          'example': '2018-11-26T00:02:41+03:00'
         'edns_cs_enabled':
           'type': 'boolean'
+        'edns_cs_use_custom':
+          'type': 'boolean'
+        'edns_cs_custom_ip':
+          'type': 'string'
         'disable_ipv6':
           'type': 'boolean'
         'dnssec_enabled':
@@ -1311,10 +1524,15 @@
         'cache_optimistic':
           'type': 'boolean'
         'upstream_mode':
+          'type': 'string'
           'enum':
-          - ''
-          - 'parallel'
-          - 'fastest_addr'
+          - const: ''
+            deprecated: true
+            description: Use `load_balance` instead.
+          - const: 'fastest_addr'
+          - const: 'load_balance'
+          - const: 'parallel'
+          'description': Upstream modes enumeration.
         'use_private_ptr_resolvers':
           'type': 'boolean'
         'resolve_clients':
@@ -1331,7 +1549,7 @@
           - 'tls://1.0.0.1'
     'UpstreamsConfig':
       'type': 'object'
-      'description': 'Upstreams configuration'
+      'description': 'Upstream configuration to be tested'
       'required':
       - 'bootstrap_dns'
       - 'upstream_dns'
@@ -1339,8 +1557,7 @@
         'bootstrap_dns':
           'type': 'array'
           'description': >
-            Bootstrap servers, port is optional after colon.  Empty value will
-            reset it to default values.
+            Bootstrap DNS servers, port is optional after colon.
           'items':
             'type': 'string'
           'example':
@@ -1349,18 +1566,25 @@
         'upstream_dns':
           'type': 'array'
           'description': >
-            Upstream servers, port is optional after colon.  Empty value will
-            reset it to default values.
+            Upstream DNS servers, port is optional after colon.
           'items':
             'type': 'string'
           'example':
           - 'tls://1.1.1.1'
           - 'tls://1.0.0.1'
+        'fallback_dns':
+          'type': 'array'
+          'description': >
+            Fallback DNS servers, port is optional after colon.
+          'items':
+            'type': 'string'
+          'example':
+          - '8.8.8.8'
+          - '1.1.1.1:53'
         'private_upstream':
           'type': 'array'
           'description': >
-            Local PTR resolvers, port is optional after colon.  Empty value will
-            reset it to default values.
+            Local PTR resolvers, port is optional after colon.
           'items':
             'type': 'string'
           'example':
@@ -1600,7 +1824,7 @@
         'avg_processing_time':
           'type': 'number'
           'format': 'float'
-          'description': 'Average time in milliseconds on processing a DNS'
+          'description': 'Average time in seconds on processing a DNS request'
           'example': 0.34
         'top_queried_domains':
           'type': 'array'
@@ -1614,6 +1838,19 @@
           'type': 'array'
           'items':
             '$ref': '#/components/schemas/TopArrayEntry'
+        'top_upstreams_responses':
+          'type': 'array'
+          'description': 'Total number of responses from each upstream.'
+          'items':
+            '$ref': '#/components/schemas/TopArrayEntry'
+          'maxItems': 100
+        'top_upstreams_avg_time':
+          'type': 'array'
+          'description': >
+            Average processing time in seconds of requests from each upstream.
+          'items':
+            '$ref': '#/components/schemas/TopArrayEntry'
+          'maxItems': 100
         'dns_queries':
           'type': 'array'
           'items':
@@ -1633,12 +1870,13 @@
     'TopArrayEntry':
       'type': 'object'
       'description': >
-        Represent the number of hits per key (domain or client IP).
+        Represent the number of hits or time duration per key (url, domain, or
+        client IP).
       'properties':
         'domain_or_ip':
-          'type': 'integer'
+          'type': 'number'
       'additionalProperties':
-          'type': 'integer'
+          'type': 'number'
     'StatsConfig':
       'type': 'object'
       'description': 'Statistics configuration'
@@ -1654,6 +1892,27 @@
           - 30
           - 90
           'type': 'integer'
+    'GetStatsConfigResponse':
+      'type': 'object'
+      'description': 'Statistics configuration'
+      'required':
+      - 'enabled'
+      - 'interval'
+      - 'ignored'
+      'properties':
+        'enabled':
+          'description': 'Are statistics enabled'
+          'type': 'boolean'
+        'interval':
+          'description': 'Statistics rotation interval in milliseconds'
+          'type': 'number'
+        'ignored':
+          'description': 'List of host names, which should not be counted'
+          'type': 'array'
+          'items':
+            'type': 'string'
+    'PutStatsConfigUpdateRequest':
+      '$ref': '#/components/schemas/GetStatsConfigResponse'
     'DhcpConfig':
       'type': 'object'
       'properties':
@@ -1717,7 +1976,6 @@
       - 'mac'
       - 'ip'
       - 'hostname'
-      - 'expires'
       'properties':
         'mac':
           'type': 'string'
@@ -2057,6 +2315,32 @@
         'anonymize_client_ip':
           'type': 'boolean'
           'description': "Anonymize clients' IP addresses"
+    'GetQueryLogConfigResponse':
+      'type': 'object'
+      'description': 'Query log configuration'
+      'required':
+      - 'enabled'
+      - 'interval'
+      - 'anonymize_client_ip'
+      - 'ignored'
+      'properties':
+        'enabled':
+          'type': 'boolean'
+          'description': 'Is query log enabled'
+        'interval':
+          'description': >
+            Time period for query log rotation in milliseconds.
+          'type': 'number'
+        'anonymize_client_ip':
+          'type': 'boolean'
+          'description': "Anonymize clients' IP addresses"
+        'ignored':
+          'description': 'List of host names, which should not be written to log'
+          'type': 'array'
+          'items':
+            'type': 'string'
+    'PutQueryLogConfigUpdateRequest':
+      '$ref': '#/components/schemas/GetQueryLogConfigResponse'
     'ResultRule':
       'description': 'Applied rule.'
       'properties':
@@ -2184,6 +2468,11 @@
           'example': true
           'description': >
             Set to true if both certificate and private key are correct.
+        'serve_plain_dns':
+          'type': 'boolean'
+          'example': true
+          'description': >
+            Set to true if plain DNS is allowed for incoming requests.
     'NetInterface':
       'type': 'object'
       'description': 'Network interface info'
@@ -2248,6 +2537,18 @@
           'type': 'integer'
           'format': 'uint16'
           'example': 80
+    'SetProtectionRequest':
+      'type': 'object'
+      'description': 'Protection state configuration'
+      'properties':
+        'enabled':
+          'type': 'boolean'
+        'duration':
+          'type': 'integer'
+          'format': 'uint64'
+          'description': 'Duration of a pause, in milliseconds.  Enabled should be false.'
+      'required':
+        - 'enabled'
     'ProfileInfo':
       'type': 'object'
       'description': 'Information about the current user'
@@ -2267,6 +2568,72 @@
         - 'name'
         - 'language'
         - 'theme'
+    'SafeSearchConfig':
+      'type': 'object'
+      'description': 'Safe search settings.'
+      'properties':
+        'enabled':
+          'type': 'boolean'
+        'bing':
+          'type': 'boolean'
+        'duckduckgo':
+          'type': 'boolean'
+        'google':
+          'type': 'boolean'
+        'pixabay':
+          'type': 'boolean'
+        'yandex':
+          'type': 'boolean'
+        'youtube':
+          'type': 'boolean'
+    'Schedule':
+      'type': 'object'
+      'description': >
+        Sets periods of inactivity for filtering blocked services.  The
+        schedule contains 7 days (Sunday to Saturday) and a time zone.
+      'properties':
+        'time_zone':
+          'description': >
+            Time zone name according to IANA time zone database.  For example
+            `Europe/Brussels`.  `Local` represents the system's local time
+            zone.
+          'type': 'string'
+        'sun':
+          '$ref': '#/components/schemas/DayRange'
+        'mon':
+          '$ref': '#/components/schemas/DayRange'
+        'tue':
+          '$ref': '#/components/schemas/DayRange'
+        'wed':
+          '$ref': '#/components/schemas/DayRange'
+        'thu':
+          '$ref': '#/components/schemas/DayRange'
+        'fri':
+          '$ref': '#/components/schemas/DayRange'
+        'sat':
+          '$ref': '#/components/schemas/DayRange'
+    'DayRange':
+      'type': 'object'
+      'description': >
+        The single interval within a day.  It begins at the `start` and ends
+        before the `end`.
+      'properties':
+        'start':
+          'type': 'number'
+          'description': >
+            The number of milliseconds elapsed from the start of a day.  It
+            must be less than `end` and is expected to be rounded to minutes.
+            So the maximum value is `86340000` (23 hours and 59 minutes).
+          'minimum': 0
+          'maximum': 86340000
+        'end':
+          'type': 'number'
+          'description': >
+            The number of milliseconds elapsed from the start of a day.  It is
+            expected to be rounded to minutes.  The maximum value is `86400000`
+            (24 hours).
+          'minimum': 0
+          'maximum': 86400000
     'Client':
       'type': 'object'
       'description': 'Client information.'
@@ -2289,9 +2656,14 @@
         'safebrowsing_enabled':
           'type': 'boolean'
         'safesearch_enabled':
+          'deprecated': true
           'type': 'boolean'
+        'safe_search':
+          '$ref': '#/components/schemas/SafeSearchConfig'
         'use_global_blocked_services':
           'type': 'boolean'
+        'blocked_services_schedule':
+          '$ref': '#/components/schemas/Schedule'
         'blocked_services':
           'type': 'array'
           'items':
@@ -2304,6 +2676,45 @@
           'items':
             'type': 'string'
           'type': 'array'
+        'ignore_querylog':
+          'description': |
+            NOTE: If `ignore_querylog` is not set in HTTP API `GET /clients/add`
+            request then default value (false) will be used.
+
+            If `ignore_querylog` is not set in HTTP API `GET /clients/update`
+            request then the existing value will not be changed.
+
+            This behaviour can be changed in the future versions.
+          'type': 'boolean'
+        'ignore_statistics':
+          'description': |
+            NOTE: If `ignore_statistics` is not set in HTTP API `GET
+            /clients/add` request then default value (false) will be used.
+
+            If `ignore_statistics` is not set in HTTP API `GET /clients/update`
+            request then the existing value will not be changed.
+
+            This behaviour can be changed in the future versions.
+          'type': 'boolean'
+        'upstreams_cache_enabled':
+          'description': |
+            NOTE: If `upstreams_cache_enabled` is not set in HTTP API
+            `GET /clients/add` request then default value (false) will be used.
+
+            If `upstreams_cache_enabled` is not set in HTTP API
+            `GET /clients/update` request then the existing value will not be
+            changed.
+
+            This behaviour can be changed in the future versions.
+          'type': 'boolean'
+        'upstreams_cache_size':
+          'description': |
+            NOTE: If `upstreams_cache_enabled` is not set in HTTP API
+            `GET /clients/update` request then the existing value will not be
+            changed.
+
+            This behaviour can be changed in the future versions.
+          'type': 'integer'
     'ClientAuto':
       'type': 'object'
       'description': 'Auto-Client information'
@@ -2350,12 +2761,15 @@
         'parental_enabled': true
         'safebrowsing_enabled': true
         'safesearch_enabled': true
+        'safe_search': {}
         'use_global_blocked_services': true
         'blocked_services': null
         'upstreams': null
         'whois_info': {}
         'disallowed': false
         'disallowed_rule': ''
+        'ignore_querylog': false
+        'ignore_statistics': false
       - '1.2.3.4':
         'name': 'Client 1-2-3-4'
         'ids': ['1.2.3.4']
@@ -2364,12 +2778,15 @@
         'parental_enabled': true
         'safebrowsing_enabled': true
         'safesearch_enabled': true
+        'safe_search': {}
         'use_global_blocked_services': true
         'blocked_services': null
         'upstreams': null
         'whois_info': {}
         'disallowed': false
         'disallowed_rule': ''
+        'ignore_querylog': false
+        'ignore_statistics': false
     'AccessListResponse':
       '$ref': '#/components/schemas/AccessList'
     'AccessSetRequest':
@@ -2424,7 +2841,10 @@
         'safebrowsing_enabled':
           'type': 'boolean'
         'safesearch_enabled':
+          'deprecated': true
           'type': 'boolean'
+        'safe_search':
+          '$ref': '#/components/schemas/SafeSearchConfig'
         'use_global_blocked_services':
           'type': 'boolean'
         'blocked_services':
@@ -2448,7 +2868,10 @@
             set to true, and this string is empty, then the client IP is
             disallowed by the "allowed IP list", that is it is not included in
             the allowed list.
-
+        'ignore_querylog':
+          'type': 'boolean'
+        'ignore_statistics':
+          'type': 'boolean'
     'WhoisInfo':
       'type': 'object'
       'additionalProperties':
@@ -2480,6 +2903,14 @@
       'items':
         '$ref': '#/components/schemas/RewriteEntry'
       'description': 'Rewrite rules array'
+    'RewriteUpdate':
+      'type': 'object'
+      'description': 'Rewrite rule update object'
+      'properties':
+        'target':
+          '$ref': '#/components/schemas/RewriteEntry'
+        'update':
+          '$ref': '#/components/schemas/RewriteEntry'
     'RewriteEntry':
       'type': 'object'
       'description': 'Rewrite rule'
@@ -2532,6 +2963,17 @@
       - 'name'
       - 'rules'
       'type': 'object'
+    'BlockedServicesSchedule':
+      'type': 'object'
+      'properties':
+        'schedule':
+          '$ref': '#/components/schemas/Schedule'
+        'ids':
+          'description': >
+            The names of the blocked services.
+          'type': 'array'
+          'items':
+            'type': 'string'
     'CheckConfigRequest':
       'type': 'object'
       'description': 'Configuration to be checked'

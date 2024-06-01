@@ -2,15 +2,11 @@ package querylog
 
 import (
 	"fmt"
-	"math/rand"
 	"net"
-	"sort"
 	"testing"
-	"time"
 
+	"github.com/AdguardTeam/AdGuardHome/internal/aghnet"
 	"github.com/AdguardTeam/AdGuardHome/internal/filtering"
-	"github.com/AdguardTeam/dnsproxy/proxyutil"
-	"github.com/AdguardTeam/golibs/stringutil"
 	"github.com/AdguardTeam/golibs/testutil"
 	"github.com/AdguardTeam/golibs/timeutil"
 	"github.com/miekg/dns"
@@ -25,32 +21,35 @@ func TestMain(m *testing.M) {
 // TestQueryLog tests adding and loading (with filtering) entries from disk and
 // memory.
 func TestQueryLog(t *testing.T) {
-	l := newQueryLog(Config{
+	l, err := newQueryLog(Config{
 		Enabled:     true,
 		FileEnabled: true,
 		RotationIvl: timeutil.Day,
 		MemSize:     100,
 		BaseDir:     t.TempDir(),
 	})
+	require.NoError(t, err)
 
 	// Add disk entries.
 	addEntry(l, "example.org", net.IPv4(1, 1, 1, 1), net.IPv4(2, 2, 2, 1))
 	// Write to disk (first file).
-	require.NoError(t, l.flushLogBuffer(true))
+	require.NoError(t, l.flushLogBuffer())
 	// Start writing to the second file.
 	require.NoError(t, l.rotate())
 	// Add disk entries.
 	addEntry(l, "example.org", net.IPv4(1, 1, 1, 2), net.IPv4(2, 2, 2, 2))
 	// Write to disk.
-	require.NoError(t, l.flushLogBuffer(true))
+	require.NoError(t, l.flushLogBuffer())
 	// Add memory entries.
 	addEntry(l, "test.example.org", net.IPv4(1, 1, 1, 3), net.IPv4(2, 2, 2, 3))
 	addEntry(l, "example.com", net.IPv4(1, 1, 1, 4), net.IPv4(2, 2, 2, 4))
+	addEntry(l, "", net.IPv4(1, 1, 1, 5), net.IPv4(2, 2, 2, 5))
 
 	type tcAssertion struct {
-		num            int
-		host           string
-		answer, client net.IP
+		host   string
+		answer net.IP
+		client net.IP
+		num    int
 	}
 
 	testCases := []struct {
@@ -61,10 +60,11 @@ func TestQueryLog(t *testing.T) {
 		name: "all",
 		sCr:  []searchCriterion{},
 		want: []tcAssertion{
-			{num: 0, host: "example.com", answer: net.IPv4(1, 1, 1, 4), client: net.IPv4(2, 2, 2, 4)},
-			{num: 1, host: "test.example.org", answer: net.IPv4(1, 1, 1, 3), client: net.IPv4(2, 2, 2, 3)},
-			{num: 2, host: "example.org", answer: net.IPv4(1, 1, 1, 2), client: net.IPv4(2, 2, 2, 2)},
-			{num: 3, host: "example.org", answer: net.IPv4(1, 1, 1, 1), client: net.IPv4(2, 2, 2, 1)},
+			{num: 0, host: ".", answer: net.IPv4(1, 1, 1, 5), client: net.IPv4(2, 2, 2, 5)},
+			{num: 1, host: "example.com", answer: net.IPv4(1, 1, 1, 4), client: net.IPv4(2, 2, 2, 4)},
+			{num: 2, host: "test.example.org", answer: net.IPv4(1, 1, 1, 3), client: net.IPv4(2, 2, 2, 3)},
+			{num: 3, host: "example.org", answer: net.IPv4(1, 1, 1, 2), client: net.IPv4(2, 2, 2, 2)},
+			{num: 4, host: "example.org", answer: net.IPv4(1, 1, 1, 1), client: net.IPv4(2, 2, 2, 1)},
 		},
 	}, {
 		name: "by_domain_strict",
@@ -106,10 +106,11 @@ func TestQueryLog(t *testing.T) {
 			value:         "2.2.2",
 		}},
 		want: []tcAssertion{
-			{num: 0, host: "example.com", answer: net.IPv4(1, 1, 1, 4), client: net.IPv4(2, 2, 2, 4)},
-			{num: 1, host: "test.example.org", answer: net.IPv4(1, 1, 1, 3), client: net.IPv4(2, 2, 2, 3)},
-			{num: 2, host: "example.org", answer: net.IPv4(1, 1, 1, 2), client: net.IPv4(2, 2, 2, 2)},
-			{num: 3, host: "example.org", answer: net.IPv4(1, 1, 1, 1), client: net.IPv4(2, 2, 2, 1)},
+			{num: 0, host: ".", answer: net.IPv4(1, 1, 1, 5), client: net.IPv4(2, 2, 2, 5)},
+			{num: 1, host: "example.com", answer: net.IPv4(1, 1, 1, 4), client: net.IPv4(2, 2, 2, 4)},
+			{num: 2, host: "test.example.org", answer: net.IPv4(1, 1, 1, 3), client: net.IPv4(2, 2, 2, 3)},
+			{num: 3, host: "example.org", answer: net.IPv4(1, 1, 1, 2), client: net.IPv4(2, 2, 2, 2)},
+			{num: 4, host: "example.org", answer: net.IPv4(1, 1, 1, 1), client: net.IPv4(2, 2, 2, 1)},
 		},
 	}}
 
@@ -128,12 +129,13 @@ func TestQueryLog(t *testing.T) {
 }
 
 func TestQueryLogOffsetLimit(t *testing.T) {
-	l := newQueryLog(Config{
+	l, err := newQueryLog(Config{
 		Enabled:     true,
 		RotationIvl: timeutil.Day,
 		MemSize:     100,
 		BaseDir:     t.TempDir(),
 	})
+	require.NoError(t, err)
 
 	const (
 		entNum           = 10
@@ -141,13 +143,13 @@ func TestQueryLogOffsetLimit(t *testing.T) {
 		secondPageDomain = "second.example.org"
 	)
 	// Add entries to the log.
-	for i := 0; i < entNum; i++ {
+	for range entNum {
 		addEntry(l, secondPageDomain, net.IPv4(1, 1, 1, 1), net.IPv4(2, 2, 2, 1))
 	}
 	// Write them to the first file.
-	require.NoError(t, l.flushLogBuffer(true))
+	require.NoError(t, l.flushLogBuffer())
 	// Add more to the in-memory part of log.
-	for i := 0; i < entNum; i++ {
+	for range entNum {
 		addEntry(l, firstPageDomain, net.IPv4(1, 1, 1, 1), net.IPv4(2, 2, 2, 1))
 	}
 
@@ -202,21 +204,22 @@ func TestQueryLogOffsetLimit(t *testing.T) {
 }
 
 func TestQueryLogMaxFileScanEntries(t *testing.T) {
-	l := newQueryLog(Config{
+	l, err := newQueryLog(Config{
 		Enabled:     true,
 		FileEnabled: true,
 		RotationIvl: timeutil.Day,
 		MemSize:     100,
 		BaseDir:     t.TempDir(),
 	})
+	require.NoError(t, err)
 
 	const entNum = 10
 	// Add entries to the log.
-	for i := 0; i < entNum; i++ {
+	for range entNum {
 		addEntry(l, "example.org", net.IPv4(1, 1, 1, 1), net.IPv4(2, 2, 2, 1))
 	}
 	// Write them to disk.
-	require.NoError(t, l.flushLogBuffer(true))
+	require.NoError(t, l.flushLogBuffer())
 
 	params := newSearchParams()
 
@@ -230,13 +233,14 @@ func TestQueryLogMaxFileScanEntries(t *testing.T) {
 }
 
 func TestQueryLogFileDisabled(t *testing.T) {
-	l := newQueryLog(Config{
+	l, err := newQueryLog(Config{
 		Enabled:     true,
 		FileEnabled: false,
 		RotationIvl: timeutil.Day,
 		MemSize:     2,
 		BaseDir:     t.TempDir(),
 	})
+	require.NoError(t, err)
 
 	addEntry(l, "example1.org", net.IPv4(1, 1, 1, 1), net.IPv4(2, 2, 2, 1))
 	addEntry(l, "example2.org", net.IPv4(1, 1, 1, 1), net.IPv4(2, 2, 2, 1))
@@ -252,40 +256,78 @@ func TestQueryLogFileDisabled(t *testing.T) {
 
 func TestQueryLogShouldLog(t *testing.T) {
 	const (
-		ignored1 = "ignor.ed"
-		ignored2 = "ignored.to"
+		ignored1        = "ignor.ed"
+		ignored2        = "ignored.to"
+		ignoredWildcard = "*.ignored.com"
+		ignoredRoot     = "|.^"
 	)
-	set := stringutil.NewSet(ignored1, ignored2)
 
-	l := newQueryLog(Config{
+	ignored := []string{
+		ignored1,
+		ignored2,
+		ignoredWildcard,
+		ignoredRoot,
+	}
+
+	engine, err := aghnet.NewIgnoreEngine(ignored)
+	require.NoError(t, err)
+
+	findClient := func(ids []string) (c *Client, err error) {
+		log := ids[0] == "no_log"
+
+		return &Client{IgnoreQueryLog: log}, nil
+	}
+
+	l, err := newQueryLog(Config{
+		Ignored:     engine,
 		Enabled:     true,
 		RotationIvl: timeutil.Day,
 		MemSize:     100,
 		BaseDir:     t.TempDir(),
-		Ignored:     set,
+		FindClient:  findClient,
 	})
+	require.NoError(t, err)
 
 	testCases := []struct {
 		name    string
 		host    string
+		ids     []string
 		wantLog bool
 	}{{
 		name:    "log",
 		host:    "example.com",
+		ids:     []string{"whatever"},
 		wantLog: true,
 	}, {
 		name:    "no_log_ignored_1",
 		host:    ignored1,
+		ids:     []string{"whatever"},
 		wantLog: false,
 	}, {
 		name:    "no_log_ignored_2",
 		host:    ignored2,
+		ids:     []string{"whatever"},
+		wantLog: false,
+	}, {
+		name:    "no_log_ignored_wildcard",
+		host:    "www.ignored.com",
+		ids:     []string{"whatever"},
+		wantLog: false,
+	}, {
+		name:    "no_log_ignored_root",
+		host:    ".",
+		ids:     []string{"whatever"},
+		wantLog: false,
+	}, {
+		name:    "no_log_client_ignore",
+		host:    "example.com",
+		ids:     []string{"no_log"},
 		wantLog: false,
 	}}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			res := l.ShouldLog(tc.host, dns.TypeA, dns.ClassINET)
+			res := l.ShouldLog(tc.host, dns.TypeA, dns.ClassINET, tc.ids)
 
 			assert.Equal(t, tc.wantLog, res)
 		})
@@ -349,75 +391,6 @@ func assertLogEntry(t *testing.T, entry *logEntry, host string, answer, client n
 	require.NoError(t, msg.Unpack(entry.Answer))
 	require.Len(t, msg.Answer, 1)
 
-	ip := proxyutil.IPFromRR(msg.Answer[0]).To16()
-	assert.Equal(t, answer, ip)
-}
-
-func testEntries() (entries []*logEntry) {
-	rsrc := rand.NewSource(time.Now().UnixNano())
-	rgen := rand.New(rsrc)
-
-	entries = make([]*logEntry, 1000)
-	for i := range entries {
-		min := rgen.Intn(60)
-		sec := rgen.Intn(60)
-		entries[i] = &logEntry{
-			Time: time.Date(2020, 1, 1, 0, min, sec, 0, time.UTC),
-		}
-	}
-
-	return entries
-}
-
-// logEntriesByTimeDesc is a wrapper over []*logEntry for sorting.
-//
-// NOTE(a.garipov): Weirdly enough, on my machine this gets consistently
-// outperformed by sort.Slice, see the benchmark below.  I'm leaving this
-// implementation here, in tests, in case we want to make sure it outperforms on
-// most machines, but for now this is unused in the actual code.
-type logEntriesByTimeDesc []*logEntry
-
-// Len implements the sort.Interface interface for logEntriesByTimeDesc.
-func (les logEntriesByTimeDesc) Len() (n int) { return len(les) }
-
-// Less implements the sort.Interface interface for logEntriesByTimeDesc.
-func (les logEntriesByTimeDesc) Less(i, j int) (less bool) {
-	return les[i].Time.After(les[j].Time)
-}
-
-// Swap implements the sort.Interface interface for logEntriesByTimeDesc.
-func (les logEntriesByTimeDesc) Swap(i, j int) { les[i], les[j] = les[j], les[i] }
-
-func BenchmarkLogEntry_sort(b *testing.B) {
-	b.Run("methods", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			b.StopTimer()
-			entries := testEntries()
-			b.StartTimer()
-
-			sort.Stable(logEntriesByTimeDesc(entries))
-		}
-	})
-
-	b.Run("reflect", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			b.StopTimer()
-			entries := testEntries()
-			b.StartTimer()
-
-			sort.SliceStable(entries, func(i, j int) (less bool) {
-				return entries[i].Time.After(entries[j].Time)
-			})
-		}
-	})
-}
-
-func TestLogEntriesByTime_sort(t *testing.T) {
-	entries := testEntries()
-	sort.Sort(logEntriesByTimeDesc(entries))
-
-	for i := range entries[1:] {
-		assert.False(t, entries[i+1].Time.After(entries[i].Time),
-			"%s %s", entries[i+1].Time, entries[i].Time)
-	}
+	a := testutil.RequireTypeAssert[*dns.A](t, msg.Answer[0])
+	assert.Equal(t, answer, a.A.To16())
 }

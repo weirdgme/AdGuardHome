@@ -3,6 +3,8 @@ import PropTypes from 'prop-types';
 import ReactTable from 'react-table';
 import { withTranslation } from 'react-i18next';
 import { sortIp } from '../../../helpers/helpers';
+import { MODAL_TYPE, TABLES_MIN_ROWS } from '../../../helpers/constants';
+import { LocalStorageHelper, LOCAL_STORAGE_KEYS } from '../../../helpers/localStorageHelper';
 
 class Table extends Component {
     cellWrap = ({ value }) => (
@@ -31,24 +33,44 @@ class Table extends Component {
             maxWidth: 100,
             sortable: false,
             resizable: false,
-            Cell: (value) => (
-                <div className="logs__row logs__row--center">
-                    <button
-                        type="button"
-                        className="btn btn-icon btn-icon--green btn-outline-secondary btn-sm"
-                        onClick={() => this.props.handleDelete({
-                            answer: value.row.answer,
-                            domain: value.row.domain,
-                        })
-                        }
-                        title={this.props.t('delete_table_action')}
-                    >
-                        <svg className="icons">
-                            <use xlinkHref="#delete" />
-                        </svg>
-                    </button>
-                </div>
-            ),
+            Cell: (value) => {
+                const currentRewrite = {
+                    answer: value.row.answer,
+                    domain: value.row.domain,
+                };
+
+                return (
+                    <div className="logs__row logs__row--center">
+                        <button
+                            type="button"
+                            className="btn btn-icon btn-outline-primary btn-sm mr-2"
+                            onClick={() => {
+                                this.props.toggleRewritesModal({
+                                    type: MODAL_TYPE.EDIT_REWRITE,
+                                    currentRewrite,
+                                });
+                            }}
+                            disabled={this.props.processingUpdate}
+                            title={this.props.t('edit_table_action')}
+                        >
+                            <svg className="icons icon12">
+                                <use xlinkHref="#edit" />
+                            </svg>
+                        </button>
+
+                        <button
+                            type="button"
+                            className="btn btn-icon btn-outline-secondary btn-sm"
+                            onClick={() => this.props.handleDelete(currentRewrite)}
+                            title={this.props.t('delete_table_action')}
+                        >
+                            <svg className="icons">
+                                <use xlinkHref="#delete" />
+                            </svg>
+                        </button>
+                    </div>
+                );
+            },
         },
     ];
 
@@ -64,8 +86,9 @@ class Table extends Component {
                 loading={processing || processingAdd || processingDelete}
                 className="-striped -highlight card-table-overflow"
                 showPagination
-                defaultPageSize={10}
-                minRows={5}
+                defaultPageSize={LocalStorageHelper.getItem(LOCAL_STORAGE_KEYS.REWRITES_PAGE_SIZE) || 10}
+                onPageSizeChange={(size) => LocalStorageHelper.setItem(LOCAL_STORAGE_KEYS.REWRITES_PAGE_SIZE, size)}
+                minRows={TABLES_MIN_ROWS}
                 ofText="/"
                 previousText={t('previous_btn')}
                 nextText={t('next_btn')}
@@ -84,7 +107,9 @@ Table.propTypes = {
     processing: PropTypes.bool.isRequired,
     processingAdd: PropTypes.bool.isRequired,
     processingDelete: PropTypes.bool.isRequired,
+    processingUpdate: PropTypes.bool.isRequired,
     handleDelete: PropTypes.func.isRequired,
+    toggleRewritesModal: PropTypes.func.isRequired,
 };
 
 export default withTranslation()(Table);

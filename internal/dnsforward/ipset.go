@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/AdguardTeam/AdGuardHome/internal/aghnet"
 	"github.com/AdguardTeam/AdGuardHome/internal/aghos"
+	"github.com/AdguardTeam/AdGuardHome/internal/ipset"
 	"github.com/AdguardTeam/golibs/errors"
 	"github.com/AdguardTeam/golibs/log"
 	"github.com/miekg/dns"
@@ -15,14 +15,14 @@ import (
 
 // ipsetCtx is the ipset context.  ipsetMgr can be nil.
 type ipsetCtx struct {
-	ipsetMgr aghnet.IpsetManager
+	ipsetMgr ipset.Manager
 }
 
 // init initializes the ipset context.  It is not safe for concurrent use.
 //
 // TODO(a.garipov): Rewrite into a simple constructor?
 func (c *ipsetCtx) init(ipsetConf []string) (err error) {
-	c.ipsetMgr, err = aghnet.NewIpsetManager(ipsetConf)
+	c.ipsetMgr, err = ipset.NewManager(ipsetConf)
 	if errors.Is(err, os.ErrInvalid) || errors.Is(err, os.ErrPermission) {
 		// ipset cannot currently be initialized if the server was installed
 		// from Snap or when the user or the binary doesn't have the required
@@ -110,6 +110,9 @@ func ipsFromAnswer(ans []dns.RR) (ip4s, ip6s []net.IP) {
 
 // process adds the resolved IP addresses to the domain's ipsets, if any.
 func (c *ipsetCtx) process(dctx *dnsContext) (rc resultCode) {
+	log.Debug("dnsforward: ipset: started processing")
+	defer log.Debug("dnsforward: ipset: finished processing")
+
 	if c.skipIpsetProcessing(dctx) {
 		return resultCodeSuccess
 	}
@@ -125,12 +128,12 @@ func (c *ipsetCtx) process(dctx *dnsContext) (rc resultCode) {
 	n, err := c.ipsetMgr.Add(host, ip4s, ip6s)
 	if err != nil {
 		// Consider ipset errors non-critical to the request.
-		log.Error("ipset: adding host ips: %s", err)
+		log.Error("dnsforward: ipset: adding host ips: %s", err)
 
 		return resultCodeSuccess
 	}
 
-	log.Debug("ipset: added %d new ipset entries", n)
+	log.Debug("dnsforward: ipset: added %d new ipset entries", n)
 
 	return resultCodeSuccess
 }

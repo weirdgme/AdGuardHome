@@ -124,10 +124,12 @@ const dhcp = handleActions(
             staticLeases: [],
         }),
 
-        [actions.toggleLeaseModal]: (state) => {
+        [actions.toggleLeaseModal]: (state, { payload }) => {
             const newState = {
                 ...state,
                 isModalOpen: !state.isModalOpen,
+                modalType: payload?.type || '',
+                leaseModalConfig: payload?.config,
             };
             return newState;
         },
@@ -174,6 +176,16 @@ const dhcp = handleActions(
             };
             return newState;
         },
+
+        [actions.updateStaticLeaseRequest]: (state) => ({ ...state, processingUpdating: true }),
+        [actions.updateStaticLeaseFailure]: (state) => ({ ...state, processingUpdating: false }),
+        [actions.updateStaticLeaseSuccess]: (state) => {
+            const newState = {
+                ...state,
+                processingUpdating: false,
+            };
+            return newState;
+        },
     },
     {
         processing: true,
@@ -183,6 +195,7 @@ const dhcp = handleActions(
         processingConfig: false,
         processingAdding: false,
         processingDeleting: false,
+        processingUpdating: false,
         enabled: false,
         interface_name: '',
         check: null,
@@ -200,6 +213,8 @@ const dhcp = handleActions(
         leases: [],
         staticLeases: [],
         isModalOpen: false,
+        leaseModalConfig: undefined,
+        modalType: '',
         dhcp_available: false,
     },
 );

@@ -2,7 +2,7 @@ import React from 'react';
 import PropTypes from 'prop-types';
 import { Field, reduxForm } from 'redux-form';
 import { Trans, useTranslation } from 'react-i18next';
-import { useDispatch } from 'react-redux';
+import { useDispatch, useSelector, shallowEqual } from 'react-redux';
 
 import { renderInputField, normalizeMac } from '../../../../helpers/form';
 import {
@@ -22,9 +22,11 @@ const Form = ({
     submitting,
     processingAdding,
     cidr,
+    isEdit,
 }) => {
     const { t } = useTranslation();
     const dispatch = useDispatch();
+    const dynamicLease = useSelector((store) => store.dhcp.leaseModalConfig, shallowEqual);
 
     const onClick = () => {
         reset();
@@ -44,6 +46,7 @@ const Form = ({
                         placeholder={t('form_enter_mac')}
                         normalize={normalizeMac}
                         validate={[validateRequiredValue, validateMac]}
+                        disabled={isEdit}
                     />
                 </div>
                 <div className="form__group">
@@ -87,7 +90,7 @@ const Form = ({
                     <button
                         type="submit"
                         className="btn btn-success btn-standard"
-                        disabled={submitting || pristine || processingAdding}
+                        disabled={submitting || processingAdding || (pristine && !dynamicLease)}
                     >
                         <Trans>save_btn</Trans>
                     </button>
@@ -111,6 +114,7 @@ Form.propTypes = {
     submitting: PropTypes.bool.isRequired,
     processingAdding: PropTypes.bool.isRequired,
     cidr: PropTypes.string.isRequired,
+    isEdit: PropTypes.bool,
 };
 
 export default reduxForm({ form: FORM_NAME.LEASE })(Form);

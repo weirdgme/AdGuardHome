@@ -1,163 +1,96 @@
 package home
 
 import (
-	"bytes"
-	"encoding"
 	"fmt"
 	"net"
 	"net/netip"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/AdguardTeam/AdGuardHome/internal/aghnet"
-	"github.com/AdguardTeam/AdGuardHome/internal/dhcpd"
+	"github.com/AdguardTeam/AdGuardHome/internal/arpdb"
+	"github.com/AdguardTeam/AdGuardHome/internal/client"
+	"github.com/AdguardTeam/AdGuardHome/internal/dhcpsvc"
 	"github.com/AdguardTeam/AdGuardHome/internal/dnsforward"
 	"github.com/AdguardTeam/AdGuardHome/internal/filtering"
 	"github.com/AdguardTeam/AdGuardHome/internal/querylog"
+	"github.com/AdguardTeam/AdGuardHome/internal/whois"
 	"github.com/AdguardTeam/dnsproxy/proxy"
 	"github.com/AdguardTeam/dnsproxy/upstream"
+	"github.com/AdguardTeam/golibs/container"
 	"github.com/AdguardTeam/golibs/errors"
+	"github.com/AdguardTeam/golibs/hostsfile"
 	"github.com/AdguardTeam/golibs/log"
-	"github.com/AdguardTeam/golibs/netutil"
 	"github.com/AdguardTeam/golibs/stringutil"
-	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 )
 
-const clientsUpdatePeriod = 10 * time.Minute
+// DHCP is an interface for accessing DHCP lease data the [clientsContainer]
+// needs.
+type DHCP interface {
+	// Leases returns all the DHCP leases.
+	Leases() (leases []*dhcpsvc.Lease)
 
-var webHandlersRegistered = false
+	// HostByIP returns the hostname of the DHCP client with the given IP
+	// address.  The address will be netip.Addr{} if there is no such client,
+	// due to an assumption that a DHCP client must always have a hostname.
+	HostByIP(ip netip.Addr) (host string)
 
-// Client contains information about persistent clients.
-type Client struct {
-	// upstreamConfig is the custom upstream config for this client.  If
-	// it's nil, it has not been initialized yet.  If it's non-nil and
-	// empty, there are no valid upstreams.  If it's non-nil and non-empty,
-	// these upstream must be used.
-	upstreamConfig *proxy.UpstreamConfig
-
-	Name string
-
-	IDs             []string
-	Tags            []string
-	BlockedServices []string
-	Upstreams       []string
-
-	UseOwnSettings        bool
-	FilteringEnabled      bool
-	SafeSearchEnabled     bool
-	SafeBrowsingEnabled   bool
-	ParentalEnabled       bool
-	UseOwnBlockedServices bool
+	// MACByIP returns the MAC address for the given IP address leased.  It
+	// returns nil if there is no such client, due to an assumption that a DHCP
+	// client must always have a MAC address.
+	MACByIP(ip netip.Addr) (mac net.HardwareAddr)
 }
 
-// closeUpstreams closes the client-specific upstream config of c if any.
-func (c *Client) closeUpstreams() (err error) {
-	if c.upstreamConfig != nil {
-		err = c.upstreamConfig.Close()
-		if err != nil {
-			return fmt.Errorf("closing upstreams of client %q: %w", c.Name, err)
-		}
-	}
-
-	return nil
-}
-
-type clientSource uint
-
-// Clients information sources.  The order determines the priority.
-const (
-	ClientSourceNone clientSource = iota
-	ClientSourceWHOIS
-	ClientSourceARP
-	ClientSourceRDNS
-	ClientSourceDHCP
-	ClientSourceHostsFile
-	ClientSourcePersistent
-)
-
-// type check
-var _ fmt.Stringer = clientSource(0)
-
-// String returns a human-readable name of cs.
-func (cs clientSource) String() (s string) {
-	switch cs {
-	case ClientSourceWHOIS:
-		return "WHOIS"
-	case ClientSourceARP:
-		return "ARP"
-	case ClientSourceRDNS:
-		return "rDNS"
-	case ClientSourceDHCP:
-		return "DHCP"
-	case ClientSourceHostsFile:
-		return "etc/hosts"
-	default:
-		return ""
-	}
-}
-
-// type check
-var _ encoding.TextMarshaler = clientSource(0)
-
-// MarshalText implements encoding.TextMarshaler for the clientSource.
-func (cs clientSource) MarshalText() (text []byte, err error) {
-	return []byte(cs.String()), nil
-}
-
-// clientSourceConf is used to configure where the runtime clients will be
-// obtained from.
-type clientSourcesConf struct {
-	WHOIS     bool `yaml:"whois"`
-	ARP       bool `yaml:"arp"`
-	RDNS      bool `yaml:"rdns"`
-	DHCP      bool `yaml:"dhcp"`
-	HostsFile bool `yaml:"hosts"`
-}
-
-// RuntimeClient information
-type RuntimeClient struct {
-	WHOISInfo *RuntimeClientWHOISInfo
-	Host      string
-	Source    clientSource
-}
-
-// RuntimeClientWHOISInfo is the filtered WHOIS data for a runtime client.
-type RuntimeClientWHOISInfo struct {
-	City    string `json:"city,omitempty"`
-	Country string `json:"country,omitempty"`
-	Orgname string `json:"orgname,omitempty"`
-}
-
+// clientsContainer is the storage of all runtime and persistent clients.
 type clientsContainer struct {
-	// TODO(a.garipov): Perhaps use a number of separate indices for
-	// different types (string, netip.Addr, and so on).
-	list    map[string]*Client // name -> client
-	idIndex map[string]*Client // ID -> client
+	// clientIndex stores information about persistent clients.
+	clientIndex *client.Index
 
-	// ipToRC is the IP address to *RuntimeClient map.
-	ipToRC map[netip.Addr]*RuntimeClient
+	// runtimeIndex stores information about runtime clients.
+	runtimeIndex *client.RuntimeIndex
 
-	lock sync.Mutex
+	allTags *container.MapSet[string]
 
-	allTags *stringutil.Set
+	// dhcp is the DHCP service implementation.
+	dhcp DHCP
 
-	// dhcpServer is used for looking up clients IP addresses by MAC addresses
-	dhcpServer dhcpd.Interface
-
-	// dnsServer is used for checking clients IP status access list status
-	dnsServer *dnsforward.Server
+	// clientChecker checks if a client is blocked by the current access
+	// settings.
+	clientChecker BlockedClientChecker
 
 	// etcHosts contains list of rewrite rules taken from the operating system's
 	// hosts database.
 	etcHosts *aghnet.HostsContainer
 
-	// arpdb stores the neighbors retrieved from ARP.
-	arpdb aghnet.ARPDB
+	// arpDB stores the neighbors retrieved from ARP.
+	arpDB arpdb.Interface
 
-	testing bool // if TRUE, this object is used for internal tests
+	// lock protects all fields.
+	//
+	// TODO(a.garipov): Use a pointer and describe which fields are protected in
+	// more detail.  Use sync.RWMutex.
+	lock sync.Mutex
+
+	// safeSearchCacheSize is the size of the safe search cache to use for
+	// persistent clients.
+	safeSearchCacheSize uint
+
+	// safeSearchCacheTTL is the TTL of the safe search cache to use for
+	// persistent clients.
+	safeSearchCacheTTL time.Duration
+
+	// testing is a flag that disables some features for internal tests.
+	//
+	// TODO(a.garipov): Awful.  Remove.
+	testing bool
+}
+
+// BlockedClientChecker checks if a client is blocked by the current access
+// settings.
+type BlockedClientChecker interface {
+	IsBlockedClient(ip netip.Addr, clientID string) (blocked bool, rule string)
 }
 
 // Init initializes clients container
@@ -165,119 +98,209 @@ type clientsContainer struct {
 // Note: this function must be called only once
 func (clients *clientsContainer) Init(
 	objects []*clientObject,
-	dhcpServer dhcpd.Interface,
+	dhcpServer DHCP,
 	etcHosts *aghnet.HostsContainer,
-	arpdb aghnet.ARPDB,
-) {
-	if clients.list != nil {
-		log.Fatal("clients.list != nil")
+	arpDB arpdb.Interface,
+	filteringConf *filtering.Config,
+) (err error) {
+	// TODO(s.chzhen):  Refactor it.
+	if clients.clientIndex != nil {
+		return errors.Error("clients container already initialized")
 	}
-	clients.list = make(map[string]*Client)
-	clients.idIndex = make(map[string]*Client)
-	clients.ipToRC = map[netip.Addr]*RuntimeClient{}
 
-	clients.allTags = stringutil.NewSet(clientTags...)
+	clients.runtimeIndex = client.NewRuntimeIndex()
 
-	clients.dhcpServer = dhcpServer
+	clients.clientIndex = client.NewIndex()
+
+	clients.allTags = container.NewMapSet(clientTags...)
+
+	// TODO(e.burkov):  Use [dhcpsvc] implementation when it's ready.
+	clients.dhcp = dhcpServer
+
 	clients.etcHosts = etcHosts
-	clients.arpdb = arpdb
-	clients.addFromConfig(objects)
+	clients.arpDB = arpDB
+	err = clients.addFromConfig(objects, filteringConf)
+	if err != nil {
+		// Don't wrap the error, because it's informative enough as is.
+		return err
+	}
+
+	clients.safeSearchCacheSize = filteringConf.SafeSearchCacheSize
+	clients.safeSearchCacheTTL = time.Minute * time.Duration(filteringConf.CacheTime)
 
 	if clients.testing {
-		return
+		return nil
 	}
 
-	clients.updateFromDHCP(true)
-	if clients.dhcpServer != nil {
-		clients.dhcpServer.SetOnLeaseChanged(clients.onDHCPLeaseChanged)
-	}
-
-	if clients.etcHosts != nil {
+	// The clients.etcHosts may be nil even if config.Clients.Sources.HostsFile
+	// is true, because of the deprecated option --no-etc-hosts.
+	//
+	// TODO(e.burkov):  The option should probably be returned, since hosts file
+	// currently used not only for clients' information enrichment, but also in
+	// the filtering module and upstream addresses resolution.
+	if config.Clients.Sources.HostsFile && clients.etcHosts != nil {
 		go clients.handleHostsUpdates()
 	}
+
+	return nil
 }
 
+// handleHostsUpdates receives the updates from the hosts container and adds
+// them to the clients container.  It is intended to be used as a goroutine.
 func (clients *clientsContainer) handleHostsUpdates() {
 	for upd := range clients.etcHosts.Upd() {
 		clients.addFromHostsFile(upd)
 	}
 }
 
-// Start - start the module
+// webHandlersRegistered prevents a [clientsContainer] from registering its web
+// handlers more than once.
+//
+// TODO(a.garipov): Refactor HTTP handler registration logic.
+var webHandlersRegistered = false
+
+// Start starts the clients container.
 func (clients *clientsContainer) Start() {
-	if !clients.testing {
-		if !webHandlersRegistered {
-			webHandlersRegistered = true
-			clients.registerWebHandlers()
-		}
-		go clients.periodicUpdate()
+	if clients.testing {
+		return
 	}
+
+	if !webHandlersRegistered {
+		webHandlersRegistered = true
+		clients.registerWebHandlers()
+	}
+
+	go clients.periodicUpdate()
 }
 
-// Reload reloads runtime clients.
-func (clients *clientsContainer) Reload() {
-	if clients.arpdb != nil {
+// reloadARP reloads runtime clients from ARP, if configured.
+func (clients *clientsContainer) reloadARP() {
+	if clients.arpDB != nil {
 		clients.addFromSystemARP()
 	}
 }
 
+// clientObject is the YAML representation of a persistent client.
 type clientObject struct {
+	SafeSearchConf filtering.SafeSearchConfig `yaml:"safe_search"`
+
+	// BlockedServices is the configuration of blocked services of a client.
+	BlockedServices *filtering.BlockedServices `yaml:"blocked_services"`
+
 	Name string `yaml:"name"`
 
-	Tags            []string `yaml:"tags"`
-	IDs             []string `yaml:"ids"`
-	BlockedServices []string `yaml:"blocked_services"`
-	Upstreams       []string `yaml:"upstreams"`
+	IDs       []string `yaml:"ids"`
+	Tags      []string `yaml:"tags"`
+	Upstreams []string `yaml:"upstreams"`
+
+	// UID is the unique identifier of the persistent client.
+	UID client.UID `yaml:"uid"`
+
+	// UpstreamsCacheSize is the DNS cache size (in bytes).
+	//
+	// TODO(d.kolyshev): Use [datasize.Bytesize].
+	UpstreamsCacheSize uint32 `yaml:"upstreams_cache_size"`
+
+	// UpstreamsCacheEnabled indicates if the DNS cache is enabled.
+	UpstreamsCacheEnabled bool `yaml:"upstreams_cache_enabled"`
 
 	UseGlobalSettings        bool `yaml:"use_global_settings"`
 	FilteringEnabled         bool `yaml:"filtering_enabled"`
 	ParentalEnabled          bool `yaml:"parental_enabled"`
-	SafeSearchEnabled        bool `yaml:"safesearch_enabled"`
 	SafeBrowsingEnabled      bool `yaml:"safebrowsing_enabled"`
 	UseGlobalBlockedServices bool `yaml:"use_global_blocked_services"`
+
+	IgnoreQueryLog   bool `yaml:"ignore_querylog"`
+	IgnoreStatistics bool `yaml:"ignore_statistics"`
+}
+
+// toPersistent returns an initialized persistent client if there are no errors.
+func (o *clientObject) toPersistent(
+	filteringConf *filtering.Config,
+	allTags *container.MapSet[string],
+) (cli *client.Persistent, err error) {
+	cli = &client.Persistent{
+		Name: o.Name,
+
+		Upstreams: o.Upstreams,
+
+		UID: o.UID,
+
+		UseOwnSettings:        !o.UseGlobalSettings,
+		FilteringEnabled:      o.FilteringEnabled,
+		ParentalEnabled:       o.ParentalEnabled,
+		SafeSearchConf:        o.SafeSearchConf,
+		SafeBrowsingEnabled:   o.SafeBrowsingEnabled,
+		UseOwnBlockedServices: !o.UseGlobalBlockedServices,
+		IgnoreQueryLog:        o.IgnoreQueryLog,
+		IgnoreStatistics:      o.IgnoreStatistics,
+		UpstreamsCacheEnabled: o.UpstreamsCacheEnabled,
+		UpstreamsCacheSize:    o.UpstreamsCacheSize,
+	}
+
+	err = cli.SetIDs(o.IDs)
+	if err != nil {
+		return nil, fmt.Errorf("parsing ids: %w", err)
+	}
+
+	if (cli.UID == client.UID{}) {
+		cli.UID, err = client.NewUID()
+		if err != nil {
+			return nil, fmt.Errorf("generating uid: %w", err)
+		}
+	}
+
+	if o.SafeSearchConf.Enabled {
+		err = cli.SetSafeSearch(
+			o.SafeSearchConf,
+			filteringConf.SafeSearchCacheSize,
+			time.Minute*time.Duration(filteringConf.CacheTime),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("init safesearch %q: %w", cli.Name, err)
+		}
+	}
+
+	err = o.BlockedServices.Validate()
+	if err != nil {
+		return nil, fmt.Errorf("init blocked services %q: %w", cli.Name, err)
+	}
+
+	cli.BlockedServices = o.BlockedServices.Clone()
+
+	cli.SetTags(o.Tags, allTags)
+
+	return cli, nil
 }
 
 // addFromConfig initializes the clients container with objects from the
 // configuration file.
-func (clients *clientsContainer) addFromConfig(objects []*clientObject) {
-	for _, o := range objects {
-		cli := &Client{
-			Name: o.Name,
-
-			IDs:       o.IDs,
-			Upstreams: o.Upstreams,
-
-			UseOwnSettings:        !o.UseGlobalSettings,
-			FilteringEnabled:      o.FilteringEnabled,
-			ParentalEnabled:       o.ParentalEnabled,
-			SafeSearchEnabled:     o.SafeSearchEnabled,
-			SafeBrowsingEnabled:   o.SafeBrowsingEnabled,
-			UseOwnBlockedServices: !o.UseGlobalBlockedServices,
-		}
-
-		for _, s := range o.BlockedServices {
-			if filtering.BlockedSvcKnown(s) {
-				cli.BlockedServices = append(cli.BlockedServices, s)
-			} else {
-				log.Info("clients: skipping unknown blocked service %q", s)
-			}
-		}
-
-		for _, t := range o.Tags {
-			if clients.allTags.Has(t) {
-				cli.Tags = append(cli.Tags, t)
-			} else {
-				log.Info("clients: skipping unknown tag %q", t)
-			}
-		}
-
-		sort.Strings(cli.Tags)
-
-		_, err := clients.Add(cli)
+func (clients *clientsContainer) addFromConfig(
+	objects []*clientObject,
+	filteringConf *filtering.Config,
+) (err error) {
+	for i, o := range objects {
+		var cli *client.Persistent
+		cli, err = o.toPersistent(filteringConf, clients.allTags)
 		if err != nil {
-			log.Error("clients: adding clients %s: %s", cli.Name, err)
+			return fmt.Errorf("clients: init persistent client at index %d: %w", i, err)
+		}
+
+		// TODO(s.chzhen):  Consider moving to the client index constructor.
+		err = clients.clientIndex.ClashesUID(cli)
+		if err != nil {
+			return fmt.Errorf("adding client %s at index %d: %w", cli.Name, i, err)
+		}
+
+		err = clients.add(cli)
+		if err != nil {
+			// TODO(s.chzhen):  Return an error instead of logging if more
+			// stringent requirements are implemented.
+			log.Error("clients: adding client %s at index %d: %s", cli.Name, i, err)
 		}
 	}
+
+	return nil
 }
 
 // forConfig returns all currently known persistent clients as objects for the
@@ -286,92 +309,85 @@ func (clients *clientsContainer) forConfig() (objs []*clientObject) {
 	clients.lock.Lock()
 	defer clients.lock.Unlock()
 
-	objs = make([]*clientObject, 0, len(clients.list))
-	for _, cli := range clients.list {
-		o := &clientObject{
+	objs = make([]*clientObject, 0, clients.clientIndex.Size())
+	clients.clientIndex.Range(func(cli *client.Persistent) (cont bool) {
+		objs = append(objs, &clientObject{
 			Name: cli.Name,
 
-			Tags:            stringutil.CloneSlice(cli.Tags),
-			IDs:             stringutil.CloneSlice(cli.IDs),
-			BlockedServices: stringutil.CloneSlice(cli.BlockedServices),
-			Upstreams:       stringutil.CloneSlice(cli.Upstreams),
+			BlockedServices: cli.BlockedServices.Clone(),
+
+			IDs:       cli.IDs(),
+			Tags:      slices.Clone(cli.Tags),
+			Upstreams: slices.Clone(cli.Upstreams),
+
+			UID: cli.UID,
 
 			UseGlobalSettings:        !cli.UseOwnSettings,
 			FilteringEnabled:         cli.FilteringEnabled,
 			ParentalEnabled:          cli.ParentalEnabled,
-			SafeSearchEnabled:        cli.SafeSearchEnabled,
+			SafeSearchConf:           cli.SafeSearchConf,
 			SafeBrowsingEnabled:      cli.SafeBrowsingEnabled,
 			UseGlobalBlockedServices: !cli.UseOwnBlockedServices,
-		}
+			IgnoreQueryLog:           cli.IgnoreQueryLog,
+			IgnoreStatistics:         cli.IgnoreStatistics,
+			UpstreamsCacheEnabled:    cli.UpstreamsCacheEnabled,
+			UpstreamsCacheSize:       cli.UpstreamsCacheSize,
+		})
 
-		objs = append(objs, o)
-	}
+		return true
+	})
 
 	// Maps aren't guaranteed to iterate in the same order each time, so the
 	// above loop can generate different orderings when writing to the config
 	// file: this produces lots of diffs in config files, so sort objects by
 	// name before writing.
-	sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
+	slices.SortStableFunc(objs, func(a, b *clientObject) (res int) {
+		return strings.Compare(a.Name, b.Name)
+	})
 
 	return objs
 }
+
+// arpClientsUpdatePeriod defines how often ARP clients are updated.
+const arpClientsUpdatePeriod = 10 * time.Minute
 
 func (clients *clientsContainer) periodicUpdate() {
 	defer log.OnPanic("clients container")
 
 	for {
-		clients.Reload()
-		time.Sleep(clientsUpdatePeriod)
-	}
-}
-
-func (clients *clientsContainer) onDHCPLeaseChanged(flags int) {
-	switch flags {
-	case dhcpd.LeaseChangedAdded,
-		dhcpd.LeaseChangedAddedStatic,
-		dhcpd.LeaseChangedRemovedStatic:
-		clients.updateFromDHCP(true)
-	case dhcpd.LeaseChangedRemovedAll:
-		clients.updateFromDHCP(false)
+		clients.reloadARP()
+		time.Sleep(arpClientsUpdatePeriod)
 	}
 }
 
 // clientSource checks if client with this IP address already exists and returns
-// the source which updated it last.  It returns [ClientSourceNone] if the
+// the source which updated it last.  It returns [client.SourceNone] if the
 // client doesn't exist.
-func (clients *clientsContainer) clientSource(ip netip.Addr) (src clientSource) {
+func (clients *clientsContainer) clientSource(ip netip.Addr) (src client.Source) {
 	clients.lock.Lock()
 	defer clients.lock.Unlock()
 
 	_, ok := clients.findLocked(ip.String())
 	if ok {
-		return ClientSourcePersistent
+		return client.SourcePersistent
 	}
 
-	rc, ok := clients.ipToRC[ip]
-	if !ok {
-		return ClientSourceNone
+	rc := clients.runtimeIndex.Client(ip)
+	if rc != nil {
+		src, _ = rc.Info()
 	}
 
-	return rc.Source
+	if src < client.SourceDHCP && clients.dhcp.HostByIP(ip) != "" {
+		src = client.SourceDHCP
+	}
+
+	return src
 }
 
-func toQueryLogWHOIS(wi *RuntimeClientWHOISInfo) (cw *querylog.ClientWHOIS) {
-	if wi == nil {
-		return &querylog.ClientWHOIS{}
-	}
-
-	return &querylog.ClientWHOIS{
-		City:    wi.City,
-		Country: wi.Country,
-		Orgname: wi.Orgname,
-	}
-}
-
-// findMultiple is a wrapper around Find to make it a valid client finder for
-// the query log.  c is never nil; if no information about the client is found,
-// it returns an artificial client record by only setting the blocking-related
-// fields.  err is always nil.
+// findMultiple is a wrapper around [clientsContainer.find] to make it a valid
+// client finder for the query log.  c is never nil; if no information about the
+// client is found, it returns an artificial client record by only setting the
+// blocking-related fields.  err is always nil.
 func (clients *clientsContainer) findMultiple(ids []string) (c *querylog.Client, err error) {
 	var artClient *querylog.Client
 	var art bool
@@ -399,25 +415,31 @@ func (clients *clientsContainer) clientOrArtificial(
 	id string,
 ) (c *querylog.Client, art bool) {
 	defer func() {
-		c.Disallowed, c.DisallowedRule = clients.dnsServer.IsBlockedClient(ip, id)
+		c.Disallowed, c.DisallowedRule = clients.clientChecker.IsBlockedClient(ip, id)
 		if c.WHOIS == nil {
-			c.WHOIS = &querylog.ClientWHOIS{}
+			c.WHOIS = &whois.Info{}
 		}
 	}()
 
-	client, ok := clients.Find(id)
-	if ok {
+	cli, ok := clients.find(id)
+	if !ok {
+		cli = clients.clientIndex.FindByIPWithoutZone(ip)
+	}
+
+	if cli != nil {
 		return &querylog.Client{
-			Name: client.Name,
+			Name:           cli.Name,
+			IgnoreQueryLog: cli.IgnoreQueryLog,
 		}, false
 	}
 
-	var rc *RuntimeClient
-	rc, ok = clients.findRuntimeClient(ip)
-	if ok {
+	rc := clients.findRuntimeClient(ip)
+	if rc != nil {
+		_, host := rc.Info()
+
 		return &querylog.Client{
-			Name:  rc.Host,
-			WHOIS: toQueryLogWHOIS(rc.WHOISInfo),
+			Name:  host,
+			WHOIS: rc.WHOIS(),
 		}, false
 	}
 
@@ -426,7 +448,8 @@ func (clients *clientsContainer) clientOrArtificial(
 	}, true
 }
 
-func (clients *clientsContainer) Find(id string) (c *Client, ok bool) {
+// find returns a shallow copy of the client if there is one found.
+func (clients *clientsContainer) find(id string) (c *client.Persistent, ok bool) {
 	clients.lock.Lock()
 	defer clients.lock.Unlock()
 
@@ -435,26 +458,44 @@ func (clients *clientsContainer) Find(id string) (c *Client, ok bool) {
 		return nil, false
 	}
 
-	c.IDs = stringutil.CloneSlice(c.IDs)
-	c.Tags = stringutil.CloneSlice(c.Tags)
-	c.BlockedServices = stringutil.CloneSlice(c.BlockedServices)
-	c.Upstreams = stringutil.CloneSlice(c.Upstreams)
-
-	return c, true
+	return c.ShallowClone(), true
 }
 
-// findUpstreams returns upstreams configured for the client, identified either
-// by its IP address or its ClientID.  upsConf is nil if the client isn't found
-// or if the client has no custom upstreams.
-func (clients *clientsContainer) findUpstreams(
+// shouldCountClient is a wrapper around [clientsContainer.find] to make it a
+// valid client information finder for the statistics.  If no information about
+// the client is found, it returns true.
+func (clients *clientsContainer) shouldCountClient(ids []string) (y bool) {
+	clients.lock.Lock()
+	defer clients.lock.Unlock()
+
+	for _, id := range ids {
+		client, ok := clients.findLocked(id)
+		if ok {
+			return !client.IgnoreStatistics
+		}
+	}
+
+	return true
+}
+
+// type check
+var _ dnsforward.ClientsContainer = (*clientsContainer)(nil)
+
+// UpstreamConfigByID implements the [dnsforward.ClientsContainer] interface for
+// *clientsContainer.  upsConf is nil if the client isn't found or if the client
+// has no custom upstreams.
+func (clients *clientsContainer) UpstreamConfigByID(
 	id string,
-) (upsConf *proxy.UpstreamConfig, err error) {
+	bootstrap upstream.Resolver,
+) (conf *proxy.CustomUpstreamConfig, err error) {
 	clients.lock.Lock()
 	defer clients.lock.Unlock()
 
 	c, ok := clients.findLocked(id)
 	if !ok {
 		return nil, nil
+	} else if c.UpstreamConfig != nil {
+		return c.UpstreamConfig, nil
 	}
 
 	upstreams := stringutil.FilterOut(c.Upstreams, dnsforward.IsCommentOrEmpty)
@@ -462,31 +503,36 @@ func (clients *clientsContainer) findUpstreams(
 		return nil, nil
 	}
 
-	if c.upstreamConfig != nil {
-		return c.upstreamConfig, nil
-	}
-
-	var conf *proxy.UpstreamConfig
-	conf, err = proxy.ParseUpstreamsConfig(
+	var upsConf *proxy.UpstreamConfig
+	upsConf, err = proxy.ParseUpstreamsConfig(
 		upstreams,
 		&upstream.Options{
-			Bootstrap:    config.DNS.BootstrapDNS,
+			Bootstrap:    bootstrap,
 			Timeout:      config.DNS.UpstreamTimeout.Duration,
 			HTTPVersions: dnsforward.UpstreamHTTPVersions(config.DNS.UseHTTP3Upstreams),
+			PreferIPv6:   config.DNS.BootstrapPreferIPv6,
 		},
 	)
 	if err != nil {
+		// Don't wrap the error since it's informative enough as is.
 		return nil, err
 	}
 
-	c.upstreamConfig = conf
+	conf = proxy.NewCustomUpstreamConfig(
+		upsConf,
+		c.UpstreamsCacheEnabled,
+		int(c.UpstreamsCacheSize),
+		config.DNS.EDNSClientSubnet.Enabled,
+	)
+	c.UpstreamConfig = conf
 
 	return conf, nil
 }
 
-// findLocked searches for a client by its ID.  For internal use only.
-func (clients *clientsContainer) findLocked(id string) (c *Client, ok bool) {
-	c, ok = clients.idIndex[id]
+// findLocked searches for a client by its ID.  clients.lock is expected to be
+// locked.
+func (clients *clientsContainer) findLocked(id string) (c *client.Persistent, ok bool) {
+	c, ok = clients.clientIndex.Find(id)
 	if ok {
 		return c, true
 	}
@@ -496,92 +542,63 @@ func (clients *clientsContainer) findLocked(id string) (c *Client, ok bool) {
 		return nil, false
 	}
 
-	for _, c = range clients.list {
-		for _, id := range c.IDs {
-			var n netip.Prefix
-			n, err = netip.ParsePrefix(id)
-			if err != nil {
-				continue
-			}
-
-			if n.Contains(ip) {
-				return c, true
-			}
-		}
-	}
-
-	if clients.dhcpServer == nil {
-		return nil, false
-	}
-
-	macFound := clients.dhcpServer.FindMACbyIP(ip.AsSlice())
-	if macFound == nil {
-		return nil, false
-	}
-
-	for _, c = range clients.list {
-		for _, id := range c.IDs {
-			var mac net.HardwareAddr
-			mac, err = net.ParseMAC(id)
-			if err != nil {
-				continue
-			}
-
-			if bytes.Equal(mac, macFound) {
-				return c, true
-			}
-		}
-	}
-
-	return nil, false
+	// TODO(e.burkov):  Iterate through clients.list only once.
+	return clients.findDHCP(ip)
 }
 
-// findRuntimeClient finds a runtime client by their IP.
-func (clients *clientsContainer) findRuntimeClient(ip netip.Addr) (rc *RuntimeClient, ok bool) {
-	if ip == (netip.Addr{}) {
+// findDHCP searches for a client by its MAC, if the DHCP server is active and
+// there is such client.  clients.lock is expected to be locked.
+func (clients *clientsContainer) findDHCP(ip netip.Addr) (c *client.Persistent, ok bool) {
+	foundMAC := clients.dhcp.MACByIP(ip)
+	if foundMAC == nil {
 		return nil, false
+	}
+
+	return clients.clientIndex.FindByMAC(foundMAC)
+}
+
+// runtimeClient returns a runtime client from internal index.  Note that it
+// doesn't include DHCP clients.
+func (clients *clientsContainer) runtimeClient(ip netip.Addr) (rc *client.Runtime) {
+	if ip == (netip.Addr{}) {
+		return nil
 	}
 
 	clients.lock.Lock()
 	defer clients.lock.Unlock()
 
-	rc, ok = clients.ipToRC[ip]
-
-	return rc, ok
+	return clients.runtimeIndex.Client(ip)
 }
 
-// check validates the client.
-func (clients *clientsContainer) check(c *Client) (err error) {
+// findRuntimeClient finds a runtime client by their IP.
+func (clients *clientsContainer) findRuntimeClient(ip netip.Addr) (rc *client.Runtime) {
+	rc = clients.runtimeClient(ip)
+	host := clients.dhcp.HostByIP(ip)
+
+	if host != "" {
+		if rc == nil {
+			rc = client.NewRuntime(ip)
+		}
+
+		rc.SetInfo(client.SourceDHCP, []string{host})
+
+		return rc
+	}
+
+	return rc
+}
+
+// check validates the client.  It also sorts the client tags.
+func (clients *clientsContainer) check(c *client.Persistent) (err error) {
 	switch {
 	case c == nil:
 		return errors.Error("client is nil")
 	case c.Name == "":
 		return errors.Error("invalid name")
-	case len(c.IDs) == 0:
+	case c.IDsLen() == 0:
 		return errors.Error("id required")
 	default:
 		// Go on.
-	}
-
-	for i, id := range c.IDs {
-		// Normalize structured data.
-		var (
-			ip  netip.Addr
-			n   netip.Prefix
-			mac net.HardwareAddr
-		)
-
-		if ip, err = netip.ParseAddr(id); err == nil {
-			c.IDs[i] = ip.String()
-		} else if n, err = netip.ParsePrefix(id); err == nil {
-			c.IDs[i] = n.String()
-		} else if mac, err = net.ParseMAC(id); err == nil {
-			c.IDs[i] = mac.String()
-		} else if err = dnsforward.ValidateClientID(id); err == nil {
-			c.IDs[i] = strings.ToLower(id)
-		} else {
-			return fmt.Errorf("invalid clientid at index %d: %q", i, id)
-		}
 	}
 
 	for _, t := range c.Tags {
@@ -590,9 +607,10 @@ func (clients *clientsContainer) check(c *Client) (err error) {
 		}
 	}
 
-	sort.Strings(c.Tags)
+	// TODO(s.chzhen):  Move to the constructor.
+	slices.Sort(c.Tags)
 
-	err = dnsforward.ValidateUpstreams(c.Upstreams)
+	_, err = proxy.ParseUpstreamsConfig(c.Upstreams, &upstream.Options{})
 	if err != nil {
 		return fmt.Errorf("invalid upstream servers: %w", err)
 	}
@@ -600,182 +618,118 @@ func (clients *clientsContainer) check(c *Client) (err error) {
 	return nil
 }
 
-// Add adds a new client object.  ok is false if such client already exists or
-// if an error occurred.
-func (clients *clientsContainer) Add(c *Client) (ok bool, err error) {
+// add adds a persistent client or returns an error.
+func (clients *clientsContainer) add(c *client.Persistent) (err error) {
 	err = clients.check(c)
 	if err != nil {
-		return false, err
-	}
-
-	clients.lock.Lock()
-	defer clients.lock.Unlock()
-
-	// check Name index
-	_, ok = clients.list[c.Name]
-	if ok {
-		return false, nil
-	}
-
-	// check ID index
-	for _, id := range c.IDs {
-		var c2 *Client
-		c2, ok = clients.idIndex[id]
-		if ok {
-			return false, fmt.Errorf("another client uses the same ID (%q): %q", id, c2.Name)
-		}
-	}
-
-	// update Name index
-	clients.list[c.Name] = c
-
-	// update ID index
-	for _, id := range c.IDs {
-		clients.idIndex[id] = c
-	}
-
-	log.Debug("clients: added %q: ID:%q [%d]", c.Name, c.IDs, len(clients.list))
-
-	return true, nil
-}
-
-// Del removes a client.  ok is false if there is no such client.
-func (clients *clientsContainer) Del(name string) (ok bool) {
-	clients.lock.Lock()
-	defer clients.lock.Unlock()
-
-	var c *Client
-	c, ok = clients.list[name]
-	if !ok {
-		return false
-	}
-
-	if err := c.closeUpstreams(); err != nil {
-		log.Error("client container: removing client %s: %s", name, err)
-	}
-
-	// update Name index
-	delete(clients.list, name)
-
-	// update ID index
-	for _, id := range c.IDs {
-		delete(clients.idIndex, id)
-	}
-
-	return true
-}
-
-// equalStringSlices returns true if the slices are equal.
-func equalStringSlices(a, b []string) (ok bool) {
-	if len(a) != len(b) {
-		return false
-	}
-
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-
-	return true
-}
-
-// Update updates a client by its name.
-func (clients *clientsContainer) Update(name string, c *Client) (err error) {
-	err = clients.check(c)
-	if err != nil {
+		// Don't wrap the error since it's informative enough as is.
 		return err
 	}
 
 	clients.lock.Lock()
 	defer clients.lock.Unlock()
 
-	prev, ok := clients.list[name]
-	if !ok {
-		return errors.Error("client not found")
-	}
-
-	// First, check the name index.
-	if prev.Name != c.Name {
-		_, ok = clients.list[c.Name]
-		if ok {
-			return errors.Error("client already exists")
-		}
-	}
-
-	// Second, check the IP index.
-	if !equalStringSlices(prev.IDs, c.IDs) {
-		for _, id := range c.IDs {
-			c2, ok2 := clients.idIndex[id]
-			if ok2 && c2 != prev {
-				return fmt.Errorf("another client uses the same id (%q): %q", id, c2.Name)
-			}
-		}
-
-		//  Update ID index.
-		for _, id := range prev.IDs {
-			delete(clients.idIndex, id)
-		}
-		for _, id := range c.IDs {
-			clients.idIndex[id] = prev
-		}
-	}
-
-	// Update name index.
-	if prev.Name != c.Name {
-		delete(clients.list, prev.Name)
-		clients.list[c.Name] = prev
-	}
-
-	// Update upstreams cache.
-	err = c.closeUpstreams()
+	err = clients.clientIndex.Clashes(c)
 	if err != nil {
+		// Don't wrap the error since it's informative enough as is.
 		return err
 	}
 
-	*prev = *c
+	clients.addLocked(c)
+
+	log.Debug("clients: added %q: ID:%q [%d]", c.Name, c.IDs(), clients.clientIndex.Size())
 
 	return nil
 }
 
-// setWHOISInfo sets the WHOIS information for a client.
-func (clients *clientsContainer) setWHOISInfo(ip netip.Addr, wi *RuntimeClientWHOISInfo) {
+// addLocked c to the indexes.  clients.lock is expected to be locked.
+func (clients *clientsContainer) addLocked(c *client.Persistent) {
+	clients.clientIndex.Add(c)
+}
+
+// remove removes a client.  ok is false if there is no such client.
+func (clients *clientsContainer) remove(name string) (ok bool) {
 	clients.lock.Lock()
 	defer clients.lock.Unlock()
 
+	c, ok := clients.clientIndex.FindByName(name)
+	if !ok {
+		return false
+	}
+
+	clients.removeLocked(c)
+
+	return true
+}
+
+// removeLocked removes c from the indexes.  clients.lock is expected to be
+// locked.
+func (clients *clientsContainer) removeLocked(c *client.Persistent) {
+	if err := c.CloseUpstreams(); err != nil {
+		log.Error("client container: removing client %s: %s", c.Name, err)
+	}
+
+	// Update the ID index.
+	clients.clientIndex.Delete(c)
+}
+
+// update updates a client by its name.
+func (clients *clientsContainer) update(prev, c *client.Persistent) (err error) {
+	err = clients.check(c)
+	if err != nil {
+		// Don't wrap the error since it's informative enough as is.
+		return err
+	}
+
+	clients.lock.Lock()
+	defer clients.lock.Unlock()
+
+	err = clients.clientIndex.Clashes(c)
+	if err != nil {
+		// Don't wrap the error since it's informative enough as is.
+		return err
+	}
+
+	clients.removeLocked(prev)
+	clients.addLocked(c)
+
+	return nil
+}
+
+// setWHOISInfo sets the WHOIS information for a client.  clients.lock is
+// expected to be locked.
+func (clients *clientsContainer) setWHOISInfo(ip netip.Addr, wi *whois.Info) {
 	_, ok := clients.findLocked(ip.String())
 	if ok {
 		log.Debug("clients: client for %s is already created, ignore whois info", ip)
-		return
-	}
-
-	rc, ok := clients.ipToRC[ip]
-	if ok {
-		rc.WHOISInfo = wi
-		log.Debug("clients: set whois info for runtime client %s: %+v", rc.Host, wi)
 
 		return
 	}
 
-	// Create a RuntimeClient implicitly so that we don't do this check
-	// again.
-	rc = &RuntimeClient{
-		Source: ClientSourceWHOIS,
+	rc := clients.runtimeIndex.Client(ip)
+	if rc == nil {
+		// Create a RuntimeClient implicitly so that we don't do this check
+		// again.
+		rc = client.NewRuntime(ip)
+		clients.runtimeIndex.Add(rc)
+
+		log.Debug("clients: set whois info for runtime client with ip %s: %+v", ip, wi)
+	} else {
+		host, _ := rc.Info()
+		log.Debug("clients: set whois info for runtime client %s: %+v", host, wi)
 	}
 
-	rc.WHOISInfo = wi
-
-	clients.ipToRC[ip] = rc
-
-	log.Debug("clients: set whois info for runtime client with ip %s: %+v", ip, wi)
+	rc.SetWHOIS(wi)
 }
 
-// AddHost adds a new IP-hostname pairing.  The priorities of the sources are
+// addHost adds a new IP-hostname pairing.  The priorities of the sources are
 // taken into account.  ok is true if the pairing was added.
-func (clients *clientsContainer) AddHost(
+//
+// TODO(a.garipov): Only used in internal tests.  Consider removing.
+func (clients *clientsContainer) addHost(
 	ip netip.Addr,
 	host string,
-	src clientSource,
+	src client.Source,
 ) (ok bool) {
 	clients.lock.Lock()
 	defer clients.lock.Unlock()
@@ -783,78 +737,101 @@ func (clients *clientsContainer) AddHost(
 	return clients.addHostLocked(ip, host, src)
 }
 
+// type check
+var _ client.AddressUpdater = (*clientsContainer)(nil)
+
+// UpdateAddress implements the [client.AddressUpdater] interface for
+// *clientsContainer
+func (clients *clientsContainer) UpdateAddress(ip netip.Addr, host string, info *whois.Info) {
+	// Common fast path optimization.
+	if host == "" && info == nil {
+		return
+	}
+
+	clients.lock.Lock()
+	defer clients.lock.Unlock()
+
+	if host != "" {
+		ok := clients.addHostLocked(ip, host, client.SourceRDNS)
+		if !ok {
+			log.Debug("clients: host for client %q already set with higher priority source", ip)
+		}
+	}
+
+	if info != nil {
+		clients.setWHOISInfo(ip, info)
+	}
+}
+
 // addHostLocked adds a new IP-hostname pairing.  clients.lock is expected to be
 // locked.
 func (clients *clientsContainer) addHostLocked(
 	ip netip.Addr,
 	host string,
-	src clientSource,
+	src client.Source,
 ) (ok bool) {
-	rc, ok := clients.ipToRC[ip]
-	if ok {
-		if rc.Source > src {
-			return false
+	rc := clients.runtimeIndex.Client(ip)
+	if rc == nil {
+		if src < client.SourceDHCP {
+			if clients.dhcp.HostByIP(ip) != "" {
+				return false
+			}
 		}
 
-		rc.Host = host
-		rc.Source = src
-	} else {
-		rc = &RuntimeClient{
-			Host:      host,
-			Source:    src,
-			WHOISInfo: &RuntimeClientWHOISInfo{},
-		}
-
-		clients.ipToRC[ip] = rc
+		rc = client.NewRuntime(ip)
+		clients.runtimeIndex.Add(rc)
 	}
 
-	log.Debug("clients: added %s -> %q [%d]", ip, host, len(clients.ipToRC))
+	rc.SetInfo(src, []string{host})
+
+	log.Debug(
+		"clients: adding client info %s -> %q %q [%d]",
+		ip,
+		src,
+		host,
+		clients.runtimeIndex.Size(),
+	)
 
 	return true
 }
 
-// rmHostsBySrc removes all entries that match the specified source.
-func (clients *clientsContainer) rmHostsBySrc(src clientSource) {
-	n := 0
-	for ip, rc := range clients.ipToRC {
-		if rc.Source == src {
-			delete(clients.ipToRC, ip)
-			n++
-		}
-	}
-
-	log.Debug("clients: removed %d client aliases", n)
-}
-
 // addFromHostsFile fills the client-hostname pairing index from the system's
 // hosts files.
-func (clients *clientsContainer) addFromHostsFile(hosts aghnet.HostsRecords) {
+func (clients *clientsContainer) addFromHostsFile(hosts *hostsfile.DefaultStorage) {
 	clients.lock.Lock()
 	defer clients.lock.Unlock()
 
-	clients.rmHostsBySrc(ClientSourceHostsFile)
+	deleted := clients.runtimeIndex.DeleteBySource(client.SourceHostsFile)
+	log.Debug("clients: removed %d client aliases from system hosts file", deleted)
 
-	n := 0
-	for ip, rec := range hosts {
-		clients.addHostLocked(ip, rec.Canonical, ClientSourceHostsFile)
-		n++
-	}
+	added := 0
+	hosts.RangeNames(func(addr netip.Addr, names []string) (cont bool) {
+		// Only the first name of the first record is considered a canonical
+		// hostname for the IP address.
+		//
+		// TODO(e.burkov):  Consider using all the names from all the records.
+		if clients.addHostLocked(addr, names[0], client.SourceHostsFile) {
+			added++
+		}
 
-	log.Debug("clients: added %d client aliases from system hosts file", n)
+		return true
+	})
+
+	log.Debug("clients: added %d client aliases from system hosts file", added)
 }
 
 // addFromSystemARP adds the IP-hostname pairings from the output of the arp -a
 // command.
 func (clients *clientsContainer) addFromSystemARP() {
-	if err := clients.arpdb.Refresh(); err != nil {
+	if err := clients.arpDB.Refresh(); err != nil {
 		log.Error("refreshing arp container: %s", err)
 
-		clients.arpdb = aghnet.EmptyARPDB{}
+		clients.arpDB = arpdb.Empty{}
 
 		return
 	}
 
-	ns := clients.arpdb.Neighbors()
+	ns := clients.arpDB.Neighbors()
 	if len(ns) == 0 {
 		log.Debug("refreshing arp container: the update is empty")
 
@@ -864,11 +841,12 @@ func (clients *clientsContainer) addFromSystemARP() {
 	clients.lock.Lock()
 	defer clients.lock.Unlock()
 
-	clients.rmHostsBySrc(ClientSourceARP)
+	deleted := clients.runtimeIndex.DeleteBySource(client.SourceARP)
+	log.Debug("clients: removed %d client aliases from arp neighborhood", deleted)
 
 	added := 0
 	for _, n := range ns {
-		if clients.addHostLocked(n.IP, n.Name, ClientSourceARP) {
+		if clients.addHostLocked(n.IP, n.Name, client.SourceARP) {
 			added++
 		}
 	}
@@ -876,63 +854,8 @@ func (clients *clientsContainer) addFromSystemARP() {
 	log.Debug("clients: added %d client aliases from arp neighborhood", added)
 }
 
-// updateFromDHCP adds the clients that have a non-empty hostname from the DHCP
-// server.
-func (clients *clientsContainer) updateFromDHCP(add bool) {
-	if clients.dhcpServer == nil || !config.Clients.Sources.DHCP {
-		return
-	}
-
-	clients.lock.Lock()
-	defer clients.lock.Unlock()
-
-	clients.rmHostsBySrc(ClientSourceDHCP)
-
-	if !add {
-		return
-	}
-
-	leases := clients.dhcpServer.Leases(dhcpd.LeasesAll)
-	n := 0
-	for _, l := range leases {
-		if l.Hostname == "" {
-			continue
-		}
-
-		// TODO(a.garipov):  Remove once we switch to netip.Addr more fully.
-		ipAddr, err := netutil.IPToAddrNoMapped(l.IP)
-		if err != nil {
-			log.Error("clients: bad client ip %v from dhcp: %s", l.IP, err)
-
-			continue
-		}
-
-		ok := clients.addHostLocked(ipAddr, l.Hostname, ClientSourceDHCP)
-		if ok {
-			n++
-		}
-	}
-
-	log.Debug("clients: added %d client aliases from dhcp", n)
-}
-
 // close gracefully closes all the client-specific upstream configurations of
 // the persistent clients.
 func (clients *clientsContainer) close() (err error) {
-	persistent := maps.Values(clients.list)
-	slices.SortFunc(persistent, func(a, b *Client) (less bool) { return a.Name < b.Name })
-
-	var errs []error
-
-	for _, cli := range persistent {
-		if err = cli.closeUpstreams(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if len(errs) > 0 {
-		return errors.List("closing client specific upstreams", errs...)
-	}
-
-	return nil
+	return clients.clientIndex.CloseUpstreams()
 }

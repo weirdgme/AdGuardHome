@@ -11,9 +11,15 @@ const Config = () => {
     const {
         blocking_mode,
         ratelimit,
+        ratelimit_subnet_len_ipv4,
+        ratelimit_subnet_len_ipv6,
+        ratelimit_whitelist,
         blocking_ipv4,
         blocking_ipv6,
+        blocked_response_ttl,
         edns_cs_enabled,
+        edns_cs_use_custom,
+        edns_cs_custom_ip,
         dnssec_enabled,
         disable_ipv6,
         processingSetConfig,
@@ -33,12 +39,18 @@ const Config = () => {
                 <Form
                     initialValues={{
                         ratelimit,
+                        ratelimit_subnet_len_ipv4,
+                        ratelimit_subnet_len_ipv6,
+                        ratelimit_whitelist,
                         blocking_mode,
                         blocking_ipv4,
                         blocking_ipv6,
+                        blocked_response_ttl,
                         edns_cs_enabled,
                         disable_ipv6,
                         dnssec_enabled,
+                        edns_cs_use_custom,
+                        edns_cs_custom_ip,
                     }}
                     onSubmit={handleFormSubmit}
                     processing={processingSetConfig}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"net"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/AdguardTeam/AdGuardHome/internal/aghtest"
 	"github.com/AdguardTeam/AdGuardHome/internal/filtering"
 	"github.com/AdguardTeam/golibs/log"
+	"github.com/AdguardTeam/golibs/netutil"
 	"github.com/AdguardTeam/urlfilter/rules"
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
@@ -71,15 +73,15 @@ func TestDecodeLogEntry(t *testing.T) {
 				},
 				CanonName:   "example.com",
 				ServiceName: "example.org",
-				IPList:      []net.IP{net.IPv4(127, 0, 0, 2)},
+				IPList:      []netip.Addr{netip.AddrFrom4([4]byte{127, 0, 0, 2})},
 				Rules: []*filtering.ResultRule{{
 					FilterListID: 42,
 					Text:         "||an.yandex.ru",
-					IP:           net.IPv4(127, 0, 0, 2),
+					IP:           netip.AddrFrom4([4]byte{127, 0, 0, 2}),
 				}, {
 					FilterListID: 43,
 					Text:         "||an2.yandex.ru",
-					IP:           net.IPv4(127, 0, 0, 3),
+					IP:           netip.AddrFrom4([4]byte{127, 0, 0, 3}),
 				}},
 				Reason:     filtering.FilteredBlockList,
 				IsFiltered: true,
@@ -127,7 +129,7 @@ func TestDecodeLogEntry(t *testing.T) {
 	}, {
 		name: "bad_time",
 		log:  `{"IP":"127.0.0.1","T":"12/09/1998T15:00:00.000000+05:00","QH":"an.yandex.ru","QT":"A","QC":"IN","CP":"","Answer":"Qz+BgAABAAEAAAAAAmFuBnlhbmRleAJydQAAAQABwAwAAQABAAAACgAEAAAAAA==","Result":{"IsFiltered":true,"Reason":3},"Elapsed":837429}`,
-		want: "decodeLogEntry handler err: parsing time \"12/09/1998T15:00:00.000000+05:00\" as \"2006-01-02T15:04:05Z07:00\": cannot parse \"9/1998T15:00:00.000000+05:00\" as \"2006\"\n",
+		want: "decodeLogEntry handler err: parsing time \"12/09/1998T15:00:00.000000+05:00\" as \"2006-01-02T15:04:05Z07:00\": cannot parse \"12/09/1998T15:00:00.000000+05:00\" as \"2006\"\n",
 	}, {
 		name: "bad_host",
 		log:  `{"IP":"127.0.0.1","T":"2020-11-25T18:55:56.519796+03:00","QH":6,"QT":"A","QC":"IN","CP":"","Answer":"Qz+BgAABAAEAAAAAAmFuBnlhbmRleAJydQAAAQABwAwAAQABAAAACgAEAAAAAA==","Result":{"IsFiltered":true,"Reason":3},"Elapsed":837429}`,
@@ -182,8 +184,7 @@ func TestDecodeLogEntry(t *testing.T) {
 			if tc.want == "" {
 				assert.Empty(t, s)
 			} else {
-				assert.True(t, strings.HasSuffix(s, tc.want),
-					"got %q", s)
+				assert.True(t, strings.HasSuffix(s, tc.want), "got %q", s)
 			}
 
 			logOutput.Reset()
@@ -193,8 +194,10 @@ func TestDecodeLogEntry(t *testing.T) {
 
 func TestDecodeLogEntry_backwardCompatability(t *testing.T) {
 	var (
-		a1, a2       = net.IP{127, 0, 0, 1}.To16(), net.IP{127, 0, 0, 2}.To16()
-		aaaa1, aaaa2 = net.ParseIP("::1"), net.ParseIP("::2")
+		a1    = netutil.IPv4Localhost()
+		a2    = a1.Next()
+		aaaa1 = netutil.IPv6Localhost()
+		aaaa2 = aaaa1.Next()
 	)
 
 	testCases := []struct {
@@ -231,7 +234,7 @@ func TestDecodeLogEntry_backwardCompatability(t *testing.T) {
 		entry: `{"Result":{"IPList":["127.0.0.1","127.0.0.2","::1","::2"],"Reason":9}}`,
 		want: &logEntry{
 			Result: filtering.Result{
-				IPList: []net.IP{
+				IPList: []netip.Addr{
 					a1,
 					a2,
 					aaaa1,
@@ -300,7 +303,7 @@ func BenchmarkAnonymizeIP(b *testing.B) {
 		b.Run(bc.name, func(b *testing.B) {
 			b.ReportAllocs()
 
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				AnonymizeIP(bc.ip)
 			}
 
@@ -310,7 +313,7 @@ func BenchmarkAnonymizeIP(b *testing.B) {
 		b.Run(bc.name+"_slow", func(b *testing.B) {
 			b.ReportAllocs()
 
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				anonymizeIPSlow(bc.ip)
 			}
 

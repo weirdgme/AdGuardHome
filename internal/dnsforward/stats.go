@@ -2,74 +2,99 @@ package dnsforward
 
 import (
 	"net"
-	"strings"
 	"time"
 
+	"github.com/AdguardTeam/AdGuardHome/internal/aghnet"
 	"github.com/AdguardTeam/AdGuardHome/internal/filtering"
 	"github.com/AdguardTeam/AdGuardHome/internal/querylog"
 	"github.com/AdguardTeam/AdGuardHome/internal/stats"
 	"github.com/AdguardTeam/dnsproxy/proxy"
 	"github.com/AdguardTeam/golibs/log"
-	"github.com/AdguardTeam/golibs/netutil"
 	"github.com/miekg/dns"
-	"golang.org/x/exp/slices"
 )
 
 // Write Stats data and logs
 func (s *Server) processQueryLogsAndStats(dctx *dnsContext) (rc resultCode) {
-	elapsed := time.Since(dctx.startTime)
+	log.Debug("dnsforward: started processing querylog and stats")
+	defer log.Debug("dnsforward: finished processing querylog and stats")
+
 	pctx := dctx.proxyCtx
+	q := pctx.Req.Question[0]
+	host := aghnet.NormalizeDomain(q.Name)
+	processingTime := time.Since(dctx.startTime)
 
-	shouldLog := true
-	msg := pctx.Req
-	q := msg.Question[0]
-	host := strings.ToLower(strings.TrimSuffix(q.Name, "."))
+	ip := pctx.Addr.Addr().AsSlice()
+	s.anonymizer.Load()(ip)
+	ipStr := net.IP(ip).String()
 
-	// don't log ANY request if refuseAny is enabled
-	if q.Qtype == dns.TypeANY && s.conf.RefuseAny {
-		shouldLog = false
+	log.Debug("dnsforward: client ip for stats and querylog: %s", ipStr)
+
+	ids := []string{ipStr}
+	if dctx.clientID != "" {
+		// Use the ClientID first because it has a higher priority.  Filters
+		// have the same priority, see applyAdditionalFiltering.
+		ids = []string{dctx.clientID, ipStr}
 	}
 
-	ip, _ := netutil.IPAndPortFromAddr(pctx.Addr)
-	ip = slices.Clone(ip)
-
-	s.serverLock.RLock()
-	defer s.serverLock.RUnlock()
-
-	s.anonymizer.Load()(ip)
-
-	log.Debug("client ip: %s", ip)
+	qt, cl := q.Qtype, q.Qclass
 
 	// Synchronize access to s.queryLog and s.stats so they won't be suddenly
 	// uninitialized while in use.  This can happen after proxy server has been
 	// stopped, but its workers haven't yet exited.
-	if shouldLog &&
-		s.queryLog != nil &&
-		s.queryLog.ShouldLog(host, q.Qtype, q.Qclass) {
-		s.logQuery(dctx, pctx, elapsed, ip)
+	s.serverLock.RLock()
+	defer s.serverLock.RUnlock()
+
+	if s.shouldLog(host, qt, cl, ids) {
+		s.logQuery(dctx, ip, processingTime)
 	} else {
 		log.Debug(
-			"dnsforward: request %s %s from %s ignored; not logging",
-			dns.Type(q.Qtype),
+			"dnsforward: request %s %s %q from %s ignored; not adding to querylog",
+			dns.Class(cl),
+			dns.Type(qt),
 			host,
-			ip,
+			ipStr,
 		)
 	}
 
-	if s.stats != nil && s.stats.ShouldCount(host, q.Qtype, q.Qclass) {
-		s.updateStats(dctx, elapsed, *dctx.result, ip)
+	if s.shouldCountStat(host, qt, cl, ids) {
+		s.updateStats(dctx, ipStr, processingTime)
+	} else {
+		log.Debug(
+			"dnsforward: request %s %s %q from %s ignored; not counting in stats",
+			dns.Class(cl),
+			dns.Type(qt),
+			host,
+			ipStr,
+		)
 	}
 
 	return resultCodeSuccess
 }
 
+// shouldLog returns true if the query with the given data should be logged in
+// the query log.  s.serverLock is expected to be locked.
+func (s *Server) shouldLog(host string, qt, cl uint16, ids []string) (ok bool) {
+	if qt == dns.TypeANY && s.conf.RefuseAny {
+		return false
+	}
+
+	// TODO(s.chzhen):  Use dnsforward.dnsContext when it will start containing
+	// persistent client.
+	return s.queryLog != nil && s.queryLog.ShouldLog(host, qt, cl, ids)
+}
+
+// shouldCountStat returns true if the query with the given data should be
+// counted in the statistics.  s.serverLock is expected to be locked.
+func (s *Server) shouldCountStat(host string, qt, cl uint16, ids []string) (ok bool) {
+	// TODO(s.chzhen):  Use dnsforward.dnsContext when it will start containing
+	// persistent client.
+	return s.stats != nil && s.stats.ShouldCount(host, qt, cl, ids)
+}
+
 // logQuery pushes the request details into the query log.
-func (s *Server) logQuery(
-	dctx *dnsContext,
-	pctx *proxy.DNSContext,
-	elapsed time.Duration,
-	ip net.IP,
-) {
+func (s *Server) logQuery(dctx *dnsContext, ip net.IP, processingTime time.Duration) {
+	pctx := dctx.proxyCtx
+
 	p := &querylog.AddParams{
 		Question:          pctx.Req,
 		ReqECS:            pctx.ReqECS,
@@ -78,7 +103,7 @@ func (s *Server) logQuery(
 		Result:            dctx.result,
 		ClientID:          dctx.clientID,
 		ClientIP:          ip,
-		Elapsed:           elapsed,
+		Elapsed:           processingTime,
 		AuthenticatedData: dctx.responseAD,
 	}
 
@@ -105,35 +130,36 @@ func (s *Server) logQuery(
 	s.queryLog.Add(p)
 }
 
-// updatesStats writes the request into statistics.
-func (s *Server) updateStats(
-	ctx *dnsContext,
-	elapsed time.Duration,
-	res filtering.Result,
-	clientIP net.IP,
-) {
-	pctx := ctx.proxyCtx
-	e := stats.Entry{}
-	e.Domain = strings.ToLower(pctx.Req.Question[0].Name)
-	e.Domain = e.Domain[:len(e.Domain)-1] // remove last "."
+// updateStats writes the request data into statistics.
+func (s *Server) updateStats(dctx *dnsContext, clientIP string, processingTime time.Duration) {
+	pctx := dctx.proxyCtx
 
-	if clientID := ctx.clientID; clientID != "" {
-		e.Client = clientID
-	} else if clientIP != nil {
-		e.Client = clientIP.String()
+	e := &stats.Entry{
+		Domain:         aghnet.NormalizeDomain(pctx.Req.Question[0].Name),
+		Result:         stats.RNotFiltered,
+		ProcessingTime: processingTime,
+		UpstreamTime:   pctx.QueryDuration,
 	}
 
-	e.Time = uint32(elapsed / 1000)
-	e.Result = stats.RNotFiltered
+	if pctx.Upstream != nil {
+		e.Upstream = pctx.Upstream.Address()
+	}
 
-	switch res.Reason {
+	if clientID := dctx.clientID; clientID != "" {
+		e.Client = clientID
+	} else {
+		e.Client = clientIP
+	}
+
+	switch dctx.result.Reason {
 	case filtering.FilteredSafeBrowsing:
 		e.Result = stats.RSafeBrowsing
 	case filtering.FilteredParental:
 		e.Result = stats.RParental
 	case filtering.FilteredSafeSearch:
 		e.Result = stats.RSafeSearch
-	case filtering.FilteredBlockList,
+	case
+		filtering.FilteredBlockList,
 		filtering.FilteredInvalid,
 		filtering.FilteredBlockedService:
 		e.Result = stats.RFiltered

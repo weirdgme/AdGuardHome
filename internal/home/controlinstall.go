@@ -39,12 +39,12 @@ type getAddrsResponse struct {
 }
 
 // handleInstallGetAddresses is the handler for /install/get_addresses endpoint.
-func (web *Web) handleInstallGetAddresses(w http.ResponseWriter, r *http.Request) {
+func (web *webAPI) handleInstallGetAddresses(w http.ResponseWriter, r *http.Request) {
 	data := getAddrsResponse{
 		Version: version.Version(),
 
-		WebPort: defaultPortHTTP,
-		DNSPort: defaultPortDNS,
+		WebPort: int(defaultPortHTTP),
+		DNSPort: int(defaultPortDNS),
 	}
 
 	ifaces, err := aghnet.GetValidNetInterfacesForWeb()
@@ -59,12 +59,12 @@ func (web *Web) handleInstallGetAddresses(w http.ResponseWriter, r *http.Request
 		data.Interfaces[iface.Name] = iface
 	}
 
-	_ = aghhttp.WriteJSONResponse(w, r, data)
+	aghhttp.WriteJSONResponseOK(w, r, data)
 }
 
 type checkConfReqEnt struct {
 	IP      netip.Addr `json:"ip"`
-	Port    int        `json:"port"`
+	Port    uint16     `json:"port"`
 	Autofix bool       `json:"autofix"`
 }
 
@@ -96,8 +96,9 @@ type checkConfResp struct {
 func (req *checkConfReq) validateWeb(tcpPorts aghalg.UniqChecker[tcpPort]) (err error) {
 	defer func() { err = errors.Annotate(err, "validating ports: %w") }()
 
-	portInt := req.Web.Port
-	port := tcpPort(portInt)
+	// TODO(a.garipov): Declare all port variables anywhere as uint16.
+	reqPort := req.Web.Port
+	port := tcpPort(reqPort)
 	addPorts(tcpPorts, port)
 	if err = tcpPorts.Validate(); err != nil {
 		// Reset the value for the port to 1 to make sure that validateDNS
@@ -108,15 +109,15 @@ func (req *checkConfReq) validateWeb(tcpPorts aghalg.UniqChecker[tcpPort]) (err 
 		return err
 	}
 
-	switch portInt {
-	case 0, config.BindPort:
+	switch reqPort {
+	case 0, config.HTTPConfig.Address.Port():
 		return nil
 	default:
 		// Go on and check the port binding only if it's not zero or won't be
 		// unbound after install.
 	}
 
-	return aghnet.CheckPort("tcp", netip.AddrPortFrom(req.Web.IP, uint16(portInt)))
+	return aghnet.CheckPort("tcp", netip.AddrPortFrom(req.Web.IP, reqPort))
 }
 
 // validateDNS returns error if the DNS part of the initial configuration can't
@@ -131,7 +132,7 @@ func (req *checkConfReq) validateDNS(
 	switch port {
 	case 0:
 		return false, nil
-	case config.BindPort:
+	case config.HTTPConfig.Address.Port():
 		// Go on and only check the UDP port since the TCP one is already bound
 		// by AdGuard Home for web interface.
 	default:
@@ -141,13 +142,13 @@ func (req *checkConfReq) validateDNS(
 			return false, err
 		}
 
-		err = aghnet.CheckPort("tcp", netip.AddrPortFrom(req.DNS.IP, uint16(port)))
+		err = aghnet.CheckPort("tcp", netip.AddrPortFrom(req.DNS.IP, port))
 		if err != nil {
 			return false, err
 		}
 	}
 
-	err = aghnet.CheckPort("udp", netip.AddrPortFrom(req.DNS.IP, uint16(port)))
+	err = aghnet.CheckPort("udp", netip.AddrPortFrom(req.DNS.IP, port))
 	if !aghnet.IsAddrInUse(err) {
 		return false, err
 	}
@@ -159,7 +160,7 @@ func (req *checkConfReq) validateDNS(
 			log.Error("disabling DNSStubListener: %s", err)
 		}
 
-		err = aghnet.CheckPort("udp", netip.AddrPortFrom(req.DNS.IP, uint16(port)))
+		err = aghnet.CheckPort("udp", netip.AddrPortFrom(req.DNS.IP, port))
 		canAutofix = false
 	}
 
@@ -167,7 +168,7 @@ func (req *checkConfReq) validateDNS(
 }
 
 // handleInstallCheckConfig handles the /check_config endpoint.
-func (web *Web) handleInstallCheckConfig(w http.ResponseWriter, r *http.Request) {
+func (web *webAPI) handleInstallCheckConfig(w http.ResponseWriter, r *http.Request) {
 	req := &checkConfReq{}
 
 	err := json.NewDecoder(r.Body).Decode(req)
@@ -189,7 +190,7 @@ func (web *Web) handleInstallCheckConfig(w http.ResponseWriter, r *http.Request)
 		resp.StaticIP = handleStaticIP(req.DNS.IP, req.SetStaticIP)
 	}
 
-	_ = aghhttp.WriteJSONResponse(w, r, resp)
+	aghhttp.WriteJSONResponseOK(w, r, resp)
 }
 
 // handleStaticIP - handles static IP request
@@ -304,7 +305,7 @@ func disableDNSStubListener() error {
 
 type applyConfigReqEnt struct {
 	IP   netip.Addr `json:"ip"`
-	Port int        `json:"port"`
+	Port uint16     `json:"port"`
 }
 
 type applyConfigReq struct {
@@ -318,8 +319,7 @@ type applyConfigReq struct {
 // copyInstallSettings copies the installation parameters between two
 // configuration structures.
 func copyInstallSettings(dst, src *configuration) {
-	dst.BindHost = src.BindHost
-	dst.BindPort = src.BindPort
+	dst.HTTPConfig = src.HTTPConfig
 	dst.DNS.BindHosts = src.DNS.BindHosts
 	dst.DNS.Port = src.DNS.Port
 }
@@ -375,7 +375,7 @@ func shutdownSrv3(srv *http3.Server) {
 const PasswordMinRunes = 8
 
 // Apply new configuration, start DNS server, restart Web server
-func (web *Web) handleInstallConfigure(w http.ResponseWriter, r *http.Request) {
+func (web *webAPI) handleInstallConfigure(w http.ResponseWriter, r *http.Request) {
 	req, restartHTTP, err := decodeApplyConfigReq(r.Body)
 	if err != nil {
 		aghhttp.Error(r, w, http.StatusBadRequest, "%s", err)
@@ -395,14 +395,14 @@ func (web *Web) handleInstallConfigure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = aghnet.CheckPort("udp", netip.AddrPortFrom(req.DNS.IP, uint16(req.DNS.Port)))
+	err = aghnet.CheckPort("udp", netip.AddrPortFrom(req.DNS.IP, req.DNS.Port))
 	if err != nil {
 		aghhttp.Error(r, w, http.StatusBadRequest, "%s", err)
 
 		return
 	}
 
-	err = aghnet.CheckPort("tcp", netip.AddrPortFrom(req.DNS.IP, uint16(req.DNS.Port)))
+	err = aghnet.CheckPort("tcp", netip.AddrPortFrom(req.DNS.IP, req.DNS.Port))
 	if err != nil {
 		aghhttp.Error(r, w, http.StatusBadRequest, "%s", err)
 
@@ -413,10 +413,21 @@ func (web *Web) handleInstallConfigure(w http.ResponseWriter, r *http.Request) {
 	copyInstallSettings(curConfig, config)
 
 	Context.firstRun = false
-	config.BindHost = req.Web.IP
-	config.BindPort = req.Web.Port
+	config.HTTPConfig.Address = netip.AddrPortFrom(req.Web.IP, req.Web.Port)
 	config.DNS.BindHosts = []netip.Addr{req.DNS.IP}
 	config.DNS.Port = req.DNS.Port
+
+	u := &webUser{
+		Name: req.Username,
+	}
+	err = Context.auth.addUser(u, req.Password)
+	if err != nil {
+		Context.firstRun = true
+		copyInstallSettings(config, curConfig)
+		aghhttp.Error(r, w, http.StatusUnprocessableEntity, "%s", err)
+
+		return
+	}
 
 	// TODO(e.burkov): StartMods() should be put in a separate goroutine at the
 	// moment we'll allow setting up TLS in the initial configuration or the
@@ -431,11 +442,6 @@ func (web *Web) handleInstallConfigure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u := &webUser{
-		Name: req.Username,
-	}
-	Context.auth.UserAdd(u, req.Password)
-
 	err = config.write()
 	if err != nil {
 		Context.firstRun = true
@@ -446,10 +452,9 @@ func (web *Web) handleInstallConfigure(w http.ResponseWriter, r *http.Request) {
 	}
 
 	web.conf.firstRun = false
-	web.conf.BindHost = req.Web.IP
-	web.conf.BindPort = req.Web.Port
+	web.conf.BindAddr = netip.AddrPortFrom(req.Web.IP, req.Web.Port)
 
-	registerControlHandlers()
+	registerControlHandlers(web)
 
 	aghhttp.OK(w)
 	if f, ok := w.(http.Flusher); ok {
@@ -487,9 +492,10 @@ func decodeApplyConfigReq(r io.Reader) (req *applyConfigReq, restartHTTP bool, e
 		return nil, false, errors.Error("ports cannot be 0")
 	}
 
-	restartHTTP = config.BindHost != req.Web.IP || config.BindPort != req.Web.Port
+	addrPort := config.HTTPConfig.Address
+	restartHTTP = addrPort.Addr() != req.Web.IP || addrPort.Port() != req.Web.Port
 	if restartHTTP {
-		err = aghnet.CheckPort("tcp", netip.AddrPortFrom(req.Web.IP, uint16(req.Web.Port)))
+		err = aghnet.CheckPort("tcp", netip.AddrPortFrom(req.Web.IP, req.Web.Port))
 		if err != nil {
 			return nil, false, fmt.Errorf(
 				"checking address %s:%d: %w",
@@ -503,7 +509,7 @@ func decodeApplyConfigReq(r io.Reader) (req *applyConfigReq, restartHTTP bool, e
 	return req, restartHTTP, err
 }
 
-func (web *Web) registerInstallHandlers() {
+func (web *webAPI) registerInstallHandlers() {
 	Context.mux.HandleFunc("/control/install/get_addresses", preInstall(ensureGET(web.handleInstallGetAddresses)))
 	Context.mux.HandleFunc("/control/install/check_config", preInstall(ensurePOST(web.handleInstallCheckConfig)))
 	Context.mux.HandleFunc("/control/install/configure", preInstall(ensurePOST(web.handleInstallConfigure)))

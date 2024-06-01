@@ -2,21 +2,6 @@ import { createAction } from 'redux-actions';
 import apiClient from '../api/Api';
 import { addErrorToast, addSuccessToast } from './toasts';
 
-export const getBlockedServicesAvailableServicesRequest = createAction('GET_BLOCKED_SERVICES_AVAILABLE_SERVICES_REQUEST');
-export const getBlockedServicesAvailableServicesFailure = createAction('GET_BLOCKED_SERVICES_AVAILABLE_SERVICES_FAILURE');
-export const getBlockedServicesAvailableServicesSuccess = createAction('GET_BLOCKED_SERVICES_AVAILABLE_SERVICES_SUCCESS');
-
-export const getBlockedServicesAvailableServices = () => async (dispatch) => {
-    dispatch(getBlockedServicesAvailableServicesRequest());
-    try {
-        const data = await apiClient.getBlockedServicesAvailableServices();
-        dispatch(getBlockedServicesAvailableServicesSuccess(data));
-    } catch (error) {
-        dispatch(addErrorToast({ error }));
-        dispatch(getBlockedServicesAvailableServicesFailure());
-    }
-};
-
 export const getBlockedServicesRequest = createAction('GET_BLOCKED_SERVICES_REQUEST');
 export const getBlockedServicesFailure = createAction('GET_BLOCKED_SERVICES_FAILURE');
 export const getBlockedServicesSuccess = createAction('GET_BLOCKED_SERVICES_SUCCESS');
@@ -47,19 +32,19 @@ export const getAllBlockedServices = () => async (dispatch) => {
     }
 };
 
-export const setBlockedServicesRequest = createAction('SET_BLOCKED_SERVICES_REQUEST');
-export const setBlockedServicesFailure = createAction('SET_BLOCKED_SERVICES_FAILURE');
-export const setBlockedServicesSuccess = createAction('SET_BLOCKED_SERVICES_SUCCESS');
+export const updateBlockedServicesRequest = createAction('UPDATE_BLOCKED_SERVICES_REQUEST');
+export const updateBlockedServicesFailure = createAction('UPDATE_BLOCKED_SERVICES_FAILURE');
+export const updateBlockedServicesSuccess = createAction('UPDATE_BLOCKED_SERVICES_SUCCESS');
 
-export const setBlockedServices = (values) => async (dispatch) => {
-    dispatch(setBlockedServicesRequest());
+export const updateBlockedServices = (values) => async (dispatch) => {
+    dispatch(updateBlockedServicesRequest());
     try {
-        await apiClient.setBlockedServices(values);
-        dispatch(setBlockedServicesSuccess());
+        await apiClient.updateBlockedServices(values);
+        dispatch(updateBlockedServicesSuccess());
         dispatch(getBlockedServices());
         dispatch(addSuccessToast('blocked_services_saved'));
     } catch (error) {
         dispatch(addErrorToast({ error }));
-        dispatch(setBlockedServicesFailure());
+        dispatch(updateBlockedServicesFailure());
     }
 };

@@ -9,11 +9,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
+	"strings"
 	"text/template"
 	"time"
 
 	"github.com/AdguardTeam/golibs/log"
-	"golang.org/x/exp/slices"
 )
 
 func main() {
@@ -43,8 +44,8 @@ func main() {
 	check(err)
 
 	// Sort all services and rules to make the output more predictable.
-	slices.SortStableFunc(hlSvcs.BlockedServices, func(a, b *hlServicesService) (less bool) {
-		return a.ID < b.ID
+	slices.SortStableFunc(hlSvcs.BlockedServices, func(a, b *hlServicesService) (res int) {
+		return strings.Compare(a.ID, b.ID)
 	})
 	for _, s := range hlSvcs.BlockedServices {
 		slices.Sort(s.Rules)

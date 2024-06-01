@@ -1,7 +1,7 @@
 package dnsforward
 
 import (
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,7 +9,7 @@ import (
 
 func TestAnyNameMatches(t *testing.T) {
 	dnsNames := []string{"host1", "*.host2", "1.2.3.4"}
-	sort.Strings(dnsNames)
+	slices.Sort(dnsNames)
 
 	testCases := []struct {
 		name    string
@@ -31,6 +31,10 @@ func TestAnyNameMatches(t *testing.T) {
 		name:    "match",
 		dnsName: "1.2.3.4",
 		want:    true,
+	}, {
+		name:    "mismatch_bad_ip",
+		dnsName: "1.2.3.256",
+		want:    false,
 	}, {
 		name:    "mismatch",
 		dnsName: "host2",

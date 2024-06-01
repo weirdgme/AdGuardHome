@@ -11,9 +11,11 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/netip"
+	"runtime"
 	"sync"
 	"time"
 
@@ -21,6 +23,8 @@ import (
 	"github.com/AdguardTeam/AdGuardHome/internal/next/dnssvc"
 	"github.com/AdguardTeam/golibs/errors"
 	"github.com/AdguardTeam/golibs/log"
+	"github.com/AdguardTeam/golibs/mathutil"
+	"github.com/AdguardTeam/golibs/pprofutil"
 	httptreemux "github.com/dimfeld/httptreemux/v5"
 )
 
@@ -33,98 +37,113 @@ type ConfigManager interface {
 	UpdateWeb(ctx context.Context, c *Config) (err error)
 }
 
-// Config is the AdGuard Home web service configuration structure.
-type Config struct {
-	// ConfigManager is used to show information about services as well as
-	// dynamically reconfigure them.
-	ConfigManager ConfigManager
-
-	// TLS is the optional TLS configuration.  If TLS is not nil,
-	// SecureAddresses must not be empty.
-	TLS *tls.Config
-
-	// Start is the time of start of AdGuard Home.
-	Start time.Time
-
-	// Addresses are the addresses on which to serve the plain HTTP API.
-	Addresses []netip.AddrPort
-
-	// SecureAddresses are the addresses on which to serve the HTTPS API.  If
-	// SecureAddresses is not empty, TLS must not be nil.
-	SecureAddresses []netip.AddrPort
-
-	// Timeout is the timeout for all server operations.
-	Timeout time.Duration
-
-	// ForceHTTPS tells if all requests to Addresses should be redirected to a
-	// secure address instead.
-	//
-	// TODO(a.garipov): Use; define rules, which address to redirect to.
-	ForceHTTPS bool
-}
-
 // Service is the AdGuard Home web service.  A nil *Service is a valid
 // [agh.Service] that does nothing.
 type Service struct {
-	confMgr    ConfigManager
-	tls        *tls.Config
-	start      time.Time
-	servers    []*http.Server
-	timeout    time.Duration
-	forceHTTPS bool
+	confMgr      ConfigManager
+	frontend     fs.FS
+	tls          *tls.Config
+	pprof        *http.Server
+	start        time.Time
+	overrideAddr netip.AddrPort
+	servers      []*http.Server
+	timeout      time.Duration
+	pprofPort    uint16
+	forceHTTPS   bool
 }
 
 // New returns a new properly initialized *Service.  If c is nil, svc is a nil
 // *Service that does nothing.  The fields of c must not be modified after
 // calling New.
-func New(c *Config) (svc *Service) {
+//
+// TODO(a.garipov): Get rid of this special handling of nil or explain it
+// better.
+func New(c *Config) (svc *Service, err error) {
 	if c == nil {
-		return nil
+		return nil, nil
 	}
 
 	svc = &Service{
-		confMgr:    c.ConfigManager,
-		tls:        c.TLS,
-		start:      c.Start,
-		timeout:    c.Timeout,
-		forceHTTPS: c.ForceHTTPS,
+		confMgr:      c.ConfigManager,
+		frontend:     c.Frontend,
+		tls:          c.TLS,
+		start:        c.Start,
+		overrideAddr: c.OverrideAddress,
+		timeout:      c.Timeout,
+		forceHTTPS:   c.ForceHTTPS,
 	}
 
 	mux := newMux(svc)
 
-	for _, a := range c.Addresses {
-		addr := a.String()
-		errLog := log.StdLog("websvc: plain http: "+addr, log.ERROR)
-		svc.servers = append(svc.servers, &http.Server{
-			Addr:              addr,
-			Handler:           mux,
-			ErrorLog:          errLog,
-			ReadTimeout:       c.Timeout,
-			WriteTimeout:      c.Timeout,
-			IdleTimeout:       c.Timeout,
-			ReadHeaderTimeout: c.Timeout,
-		})
+	if svc.overrideAddr != (netip.AddrPort{}) {
+		svc.servers = []*http.Server{newSrv(svc.overrideAddr, nil, mux, c.Timeout)}
+	} else {
+		for _, a := range c.Addresses {
+			svc.servers = append(svc.servers, newSrv(a, nil, mux, c.Timeout))
+		}
+
+		for _, a := range c.SecureAddresses {
+			svc.servers = append(svc.servers, newSrv(a, c.TLS, mux, c.Timeout))
+		}
 	}
 
-	for _, a := range c.SecureAddresses {
-		addr := a.String()
-		errLog := log.StdLog("websvc: https: "+addr, log.ERROR)
-		svc.servers = append(svc.servers, &http.Server{
-			Addr:              addr,
-			Handler:           mux,
-			TLSConfig:         c.TLS,
-			ErrorLog:          errLog,
-			ReadTimeout:       c.Timeout,
-			WriteTimeout:      c.Timeout,
-			IdleTimeout:       c.Timeout,
-			ReadHeaderTimeout: c.Timeout,
-		})
-	}
+	svc.setupPprof(c.Pprof)
 
-	return svc
+	return svc, nil
 }
 
-// newMux returns a new HTTP request multiplexor for the AdGuard Home web
+// setupPprof sets the pprof properties of svc.
+func (svc *Service) setupPprof(c *PprofConfig) {
+	if !c.Enabled {
+		// Set to zero explicitly in case pprof used to be enabled before a
+		// reconfiguration took place.
+		runtime.SetBlockProfileRate(0)
+		runtime.SetMutexProfileFraction(0)
+
+		return
+	}
+
+	runtime.SetBlockProfileRate(1)
+	runtime.SetMutexProfileFraction(1)
+
+	pprofMux := http.NewServeMux()
+	pprofutil.RoutePprof(pprofMux)
+
+	svc.pprofPort = c.Port
+	addr := netip.AddrPortFrom(netip.AddrFrom4([4]byte{127, 0, 0, 1}), c.Port)
+
+	// TODO(a.garipov): Consider making pprof timeout configurable.
+	svc.pprof = newSrv(addr, nil, pprofMux, 10*time.Minute)
+}
+
+// newSrv returns a new *http.Server with the given parameters.
+func newSrv(
+	addr netip.AddrPort,
+	tlsConf *tls.Config,
+	h http.Handler,
+	timeout time.Duration,
+) (srv *http.Server) {
+	addrStr := addr.String()
+	srv = &http.Server{
+		Addr:              addrStr,
+		Handler:           h,
+		TLSConfig:         tlsConf,
+		ReadTimeout:       timeout,
+		WriteTimeout:      timeout,
+		IdleTimeout:       timeout,
+		ReadHeaderTimeout: timeout,
+	}
+
+	if tlsConf == nil {
+		srv.ErrorLog = log.StdLog("websvc: plain http: "+addrStr, log.ERROR)
+	} else {
+		srv.ErrorLog = log.StdLog("websvc: https: "+addrStr, log.ERROR)
+	}
+
+	return srv
+}
+
+// newMux returns a new HTTP request multiplexer for the AdGuard Home web
 // service.
 func newMux(svc *Service) (mux *httptreemux.ContextMux) {
 	mux = httptreemux.NewContextMux()
@@ -132,41 +151,54 @@ func newMux(svc *Service) (mux *httptreemux.ContextMux) {
 	routes := []struct {
 		handler http.HandlerFunc
 		method  string
-		path    string
+		pattern string
 		isJSON  bool
 	}{{
 		handler: svc.handleGetHealthCheck,
 		method:  http.MethodGet,
-		path:    PathHealthCheck,
+		pattern: PathHealthCheck,
+		isJSON:  false,
+	}, {
+		handler: http.FileServer(http.FS(svc.frontend)).ServeHTTP,
+		method:  http.MethodGet,
+		pattern: PathFrontend,
+		isJSON:  false,
+	}, {
+		handler: http.FileServer(http.FS(svc.frontend)).ServeHTTP,
+		method:  http.MethodGet,
+		pattern: PathRoot,
 		isJSON:  false,
 	}, {
 		handler: svc.handleGetSettingsAll,
 		method:  http.MethodGet,
-		path:    PathV1SettingsAll,
+		pattern: PathV1SettingsAll,
 		isJSON:  true,
 	}, {
 		handler: svc.handlePatchSettingsDNS,
 		method:  http.MethodPatch,
-		path:    PathV1SettingsDNS,
+		pattern: PathV1SettingsDNS,
 		isJSON:  true,
 	}, {
 		handler: svc.handlePatchSettingsHTTP,
 		method:  http.MethodPatch,
-		path:    PathV1SettingsHTTP,
+		pattern: PathV1SettingsHTTP,
 		isJSON:  true,
 	}, {
 		handler: svc.handleGetV1SystemInfo,
 		method:  http.MethodGet,
-		path:    PathV1SystemInfo,
+		pattern: PathV1SystemInfo,
 		isJSON:  true,
 	}}
 
 	for _, r := range routes {
+		var hdlr http.Handler
 		if r.isJSON {
-			mux.Handle(r.method, r.path, jsonMw(r.handler))
+			hdlr = jsonMw(r.handler)
 		} else {
-			mux.Handle(r.method, r.path, r.handler)
+			hdlr = r.handler
 		}
+
+		mux.Handle(r.method, r.pattern, logMw(hdlr))
 	}
 
 	return mux
@@ -177,23 +209,23 @@ func newMux(svc *Service) (mux *httptreemux.ContextMux) {
 // ":0" addresses, addrs will not return the actual bound ports until Start is
 // finished.
 func (svc *Service) addrs() (addrs, secureAddrs []netip.AddrPort) {
-	for _, srv := range svc.servers {
-		addrPort, err := netip.ParseAddrPort(srv.Addr)
-		if err != nil {
-			// Technically shouldn't happen, since all servers must have a valid
-			// address.
-			panic(fmt.Errorf("websvc: server %q: bad address: %w", srv.Addr, err))
-		}
+	if svc.overrideAddr != (netip.AddrPort{}) {
+		return []netip.AddrPort{svc.overrideAddr}, nil
+	}
 
-		// srv.Serve will set TLSConfig to an almost empty value, so, instead of
-		// relying only on the nilness of TLSConfig, check the length of the
+	for _, srv := range svc.servers {
+		// Use MustParseAddrPort, since no errors should technically happen
+		// here, because all servers must have a valid address.
+		addrPort := netip.MustParseAddrPort(srv.Addr)
+
+		// [srv.Serve] will set TLSConfig to an almost empty value, so, instead
+		// of relying only on the nilness of TLSConfig, check the length of the
 		// certificates field as well.
 		if srv.TLSConfig == nil || len(srv.TLSConfig.Certificates) == 0 {
 			addrs = append(addrs, addrPort)
 		} else {
 			secureAddrs = append(secureAddrs, addrPort)
 		}
-
 	}
 
 	return addrs, secureAddrs
@@ -215,10 +247,17 @@ func (svc *Service) Start() (err error) {
 		return nil
 	}
 
+	pprofEnabled := svc.pprof != nil
+	srvNum := len(svc.servers) + mathutil.BoolToNumber[int](pprofEnabled)
+
 	wg := &sync.WaitGroup{}
-	wg.Add(len(svc.servers))
+	wg.Add(srvNum)
 	for _, srv := range svc.servers {
 		go serve(srv, wg)
+	}
+
+	if pprofEnabled {
+		go serve(svc.pprof, wg)
 	}
 
 	wg.Wait()
@@ -269,37 +308,22 @@ func (svc *Service) Shutdown(ctx context.Context) (err error) {
 		return nil
 	}
 
+	defer func() { err = errors.Annotate(err, "shutting down: %w") }()
+
 	var errs []error
 	for _, srv := range svc.servers {
-		serr := srv.Shutdown(ctx)
-		if serr != nil {
-			errs = append(errs, fmt.Errorf("shutting down srv %s: %w", srv.Addr, serr))
+		shutdownErr := srv.Shutdown(ctx)
+		if shutdownErr != nil {
+			errs = append(errs, fmt.Errorf("srv %s: %w", srv.Addr, shutdownErr))
 		}
 	}
 
-	if len(errs) > 0 {
-		return errors.List("shutting down", errs...)
+	if svc.pprof != nil {
+		shutdownErr := svc.pprof.Shutdown(ctx)
+		if shutdownErr != nil {
+			errs = append(errs, fmt.Errorf("pprof srv %s: %w", svc.pprof.Addr, shutdownErr))
+		}
 	}
 
-	return nil
-}
-
-// Config returns the current configuration of the web service.  Config must not
-// be called simultaneously with Start.  If svc was initialized with ":0"
-// addresses, addrs will not return the actual bound ports until Start is
-// finished.
-func (svc *Service) Config() (c *Config) {
-	c = &Config{
-		ConfigManager: svc.confMgr,
-		TLS:           svc.tls,
-		// Leave Addresses and SecureAddresses empty and get the actual
-		// addresses that include the :0 ones later.
-		Start:      svc.start,
-		Timeout:    svc.timeout,
-		ForceHTTPS: svc.forceHTTPS,
-	}
-
-	c.Addresses, c.SecureAddresses = svc.addrs()
-
-	return c
+	return errors.Join(errs...)
 }

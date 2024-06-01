@@ -38,15 +38,19 @@ type tlsManager struct {
 
 	confLock sync.Mutex
 	conf     tlsConfigSettings
+
+	// servePlainDNS defines if plain DNS is allowed for incoming requests.
+	servePlainDNS bool
 }
 
 // newTLSManager initializes the manager of TLS configuration.  m is always
 // non-nil while any returned error indicates that the TLS configuration isn't
 // valid.  Thus TLS may be initialized later, e.g. via the web UI.
-func newTLSManager(conf tlsConfigSettings) (m *tlsManager, err error) {
+func newTLSManager(conf tlsConfigSettings, servePlainDNS bool) (m *tlsManager, err error) {
 	m = &tlsManager{
-		status: &tlsConfigStatus{},
-		conf:   conf,
+		status:        &tlsConfigStatus{},
+		conf:          conf,
+		servePlainDNS: servePlainDNS,
 	}
 
 	if m.conf.Enabled {
@@ -108,7 +112,7 @@ func (m *tlsManager) start() {
 	// The background context is used because the TLSConfigChanged wraps context
 	// with timeout on its own and shuts down the server, which handles current
 	// request.
-	Context.web.TLSConfigChanged(context.Background(), tlsConf)
+	Context.web.tlsConfigChanged(context.Background(), tlsConf)
 }
 
 // reload updates the configuration and restarts t.
@@ -156,7 +160,7 @@ func (m *tlsManager) reload() {
 	// The background context is used because the TLSConfigChanged wraps context
 	// with timeout on its own and shuts down the server, which handles current
 	// request.
-	Context.web.TLSConfigChanged(context.Background(), tlsConf)
+	Context.web.tlsConfigChanged(context.Background(), tlsConf)
 }
 
 // loadTLSConf loads and validates the TLS configuration.  The returned error is
@@ -172,9 +176,32 @@ func loadTLSConf(tlsConf *tlsConfigSettings, status *tlsConfigStatus) (err error
 		}
 	}()
 
-	tlsConf.CertificateChainData = []byte(tlsConf.CertificateChain)
-	tlsConf.PrivateKeyData = []byte(tlsConf.PrivateKey)
+	err = loadCertificateChainData(tlsConf, status)
+	if err != nil {
+		// Don't wrap the error, because it's informative enough as is.
+		return err
+	}
 
+	err = loadPrivateKeyData(tlsConf, status)
+	if err != nil {
+		// Don't wrap the error, because it's informative enough as is.
+		return err
+	}
+
+	err = validateCertificates(
+		status,
+		tlsConf.CertificateChainData,
+		tlsConf.PrivateKeyData,
+		tlsConf.ServerName,
+	)
+
+	return errors.Annotate(err, "validating certificate pair: %w")
+}
+
+// loadCertificateChainData loads PEM-encoded certificates chain data to the
+// TLS configuration.
+func loadCertificateChainData(tlsConf *tlsConfigSettings, status *tlsConfigStatus) (err error) {
+	tlsConf.CertificateChainData = []byte(tlsConf.CertificateChain)
 	if tlsConf.CertificatePath != "" {
 		if tlsConf.CertificateChain != "" {
 			return errors.Error("certificate data and file can't be set together")
@@ -190,6 +217,13 @@ func loadTLSConf(tlsConf *tlsConfigSettings, status *tlsConfigStatus) (err error
 		status.ValidCert = true
 	}
 
+	return nil
+}
+
+// loadPrivateKeyData loads PEM-encoded private key data to the TLS
+// configuration.
+func loadPrivateKeyData(tlsConf *tlsConfigSettings, status *tlsConfigStatus) (err error) {
+	tlsConf.PrivateKeyData = []byte(tlsConf.PrivateKey)
 	if tlsConf.PrivateKeyPath != "" {
 		if tlsConf.PrivateKey != "" {
 			return errors.Error("private key data and file can't be set together")
@@ -201,16 +235,6 @@ func loadTLSConf(tlsConf *tlsConfigSettings, status *tlsConfigStatus) (err error
 		}
 
 		status.ValidKey = true
-	}
-
-	err = validateCertificates(
-		status,
-		tlsConf.CertificateChainData,
-		tlsConf.PrivateKeyData,
-		tlsConf.ServerName,
-	)
-	if err != nil {
-		return fmt.Errorf("validating certificate pair: %w", err)
 	}
 
 	return nil
@@ -263,21 +287,29 @@ type tlsConfig struct {
 	tlsConfigSettingsExt `json:",inline"`
 }
 
-// tlsConfigSettingsExt is used to (un)marshal the PrivateKeySaved field to
-// ensure that clients don't send and receive previously saved private keys.
+// tlsConfigSettingsExt is used to (un)marshal PrivateKeySaved field and
+// ServePlainDNS field.
 type tlsConfigSettingsExt struct {
 	tlsConfigSettings `json:",inline"`
 
 	// PrivateKeySaved is true if the private key is saved as a string and omit
-	// key from answer.
-	PrivateKeySaved bool `yaml:"-" json:"private_key_saved,inline"`
+	// key from answer.  It is used to ensure that clients don't send and
+	// receive previously saved private keys.
+	PrivateKeySaved bool `yaml:"-" json:"private_key_saved"`
+
+	// ServePlainDNS defines if plain DNS is allowed for incoming requests.  It
+	// is an [aghalg.NullBool] to be able to tell when it's set without using
+	// pointers.
+	ServePlainDNS aghalg.NullBool `yaml:"-" json:"serve_plain_dns"`
 }
 
+// handleTLSStatus is the handler for the GET /control/tls/status HTTP API.
 func (m *tlsManager) handleTLSStatus(w http.ResponseWriter, r *http.Request) {
 	m.confLock.Lock()
 	data := tlsConfig{
 		tlsConfigSettingsExt: tlsConfigSettingsExt{
 			tlsConfigSettings: m.conf,
+			ServePlainDNS:     aghalg.BoolToNullBool(m.servePlainDNS),
 		},
 		tlsConfigStatus: m.status,
 	}
@@ -286,6 +318,7 @@ func (m *tlsManager) handleTLSStatus(w http.ResponseWriter, r *http.Request) {
 	marshalTLS(w, r, data)
 }
 
+// handleTLSValidate is the handler for the POST /control/tls/validate HTTP API.
 func (m *tlsManager) handleTLSValidate(w http.ResponseWriter, r *http.Request) {
 	setts, err := unmarshalTLS(r)
 	if err != nil {
@@ -298,30 +331,8 @@ func (m *tlsManager) handleTLSValidate(w http.ResponseWriter, r *http.Request) {
 		setts.PrivateKey = m.conf.PrivateKey
 	}
 
-	if setts.Enabled {
-		err = validatePorts(
-			tcpPort(config.BindPort),
-			tcpPort(setts.PortHTTPS),
-			tcpPort(setts.PortDNSOverTLS),
-			tcpPort(setts.PortDNSCrypt),
-			udpPort(config.DNS.Port),
-			udpPort(setts.PortDNSOverQUIC),
-		)
-		if err != nil {
-			aghhttp.Error(r, w, http.StatusBadRequest, "%s", err)
-
-			return
-		}
-	}
-
-	if !webCheckPortAvailable(setts.PortHTTPS) {
-		aghhttp.Error(
-			r,
-			w,
-			http.StatusBadRequest,
-			"port %d is not available, cannot enable HTTPS on it",
-			setts.PortHTTPS,
-		)
+	if err = validateTLSSettings(setts); err != nil {
+		aghhttp.Error(r, w, http.StatusBadRequest, "%s", err)
 
 		return
 	}
@@ -338,7 +349,12 @@ func (m *tlsManager) handleTLSValidate(w http.ResponseWriter, r *http.Request) {
 	marshalTLS(w, r, resp)
 }
 
-func (m *tlsManager) setConfig(newConf tlsConfigSettings, status *tlsConfigStatus) (restartHTTPS bool) {
+// setConfig updates manager conf with the given one.
+func (m *tlsManager) setConfig(
+	newConf tlsConfigSettings,
+	status *tlsConfigStatus,
+	servePlain aghalg.NullBool,
+) (restartHTTPS bool) {
 	m.confLock.Lock()
 	defer m.confLock.Unlock()
 
@@ -370,9 +386,15 @@ func (m *tlsManager) setConfig(newConf tlsConfigSettings, status *tlsConfigStatu
 	m.conf.PrivateKeyData = newConf.PrivateKeyData
 	m.status = status
 
+	if servePlain != aghalg.NBNull {
+		m.servePlainDNS = servePlain == aghalg.NBTrue
+	}
+
 	return restartHTTPS
 }
 
+// handleTLSConfigure is the handler for the POST /control/tls/configure HTTP
+// API.
 func (m *tlsManager) handleTLSConfigure(w http.ResponseWriter, r *http.Request) {
 	req, err := unmarshalTLS(r)
 	if err != nil {
@@ -385,31 +407,8 @@ func (m *tlsManager) handleTLSConfigure(w http.ResponseWriter, r *http.Request) 
 		req.PrivateKey = m.conf.PrivateKey
 	}
 
-	if req.Enabled {
-		err = validatePorts(
-			tcpPort(config.BindPort),
-			tcpPort(req.PortHTTPS),
-			tcpPort(req.PortDNSOverTLS),
-			tcpPort(req.PortDNSCrypt),
-			udpPort(config.DNS.Port),
-			udpPort(req.PortDNSOverQUIC),
-		)
-		if err != nil {
-			aghhttp.Error(r, w, http.StatusBadRequest, "%s", err)
-
-			return
-		}
-	}
-
-	// TODO(e.burkov):  Investigate and perhaps check other ports.
-	if !webCheckPortAvailable(req.PortHTTPS) {
-		aghhttp.Error(
-			r,
-			w,
-			http.StatusBadRequest,
-			"port %d is not available, cannot enable https on it",
-			req.PortHTTPS,
-		)
+	if err = validateTLSSettings(req); err != nil {
+		aghhttp.Error(r, w, http.StatusBadRequest, "%s", err)
 
 		return
 	}
@@ -427,8 +426,18 @@ func (m *tlsManager) handleTLSConfigure(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	restartHTTPS := m.setConfig(req.tlsConfigSettings, status)
+	restartHTTPS := m.setConfig(req.tlsConfigSettings, status, req.ServePlainDNS)
 	m.setCertFileTime()
+
+	if req.ServePlainDNS != aghalg.NBNull {
+		func() {
+			m.confLock.Lock()
+			defer m.confLock.Unlock()
+
+			config.DNS.ServePlainDNS = req.ServePlainDNS == aghalg.NBTrue
+		}()
+	}
+
 	onConfigModified()
 
 	err = reconfigureDNSServer()
@@ -454,9 +463,36 @@ func (m *tlsManager) handleTLSConfigure(w http.ResponseWriter, r *http.Request) 
 	// same reason.
 	if restartHTTPS {
 		go func() {
-			Context.web.TLSConfigChanged(context.Background(), req.tlsConfigSettings)
+			Context.web.tlsConfigChanged(context.Background(), req.tlsConfigSettings)
 		}()
 	}
+}
+
+// validateTLSSettings returns error if the setts are not valid.
+func validateTLSSettings(setts tlsConfigSettingsExt) (err error) {
+	if setts.Enabled {
+		err = validatePorts(
+			tcpPort(config.HTTPConfig.Address.Port()),
+			tcpPort(setts.PortHTTPS),
+			tcpPort(setts.PortDNSOverTLS),
+			tcpPort(setts.PortDNSCrypt),
+			udpPort(config.DNS.Port),
+			udpPort(setts.PortDNSOverQUIC),
+		)
+		if err != nil {
+			// Don't wrap the error since it's informative enough as is.
+			return err
+		}
+	} else if setts.ServePlainDNS == aghalg.NBFalse {
+		// TODO(a.garipov): Support full disabling of all DNS.
+		return errors.Error("plain DNS is required in case encryption protocols are disabled")
+	}
+
+	if !webCheckPortAvailable(setts.PortHTTPS) {
+		return fmt.Errorf("port %d is not available, cannot enable HTTPS on it", setts.PortHTTPS)
+	}
+
+	return nil
 }
 
 // validatePorts validates the uniqueness of TCP and UDP ports for AdGuard Home
@@ -668,9 +704,9 @@ const (
 	keyTypeRSA     = "RSA"
 )
 
-// Attempt to parse the given private key DER block. OpenSSL 0.9.8 generates
+// Attempt to parse the given private key DER block.  OpenSSL 0.9.8 generates
 // PKCS#1 private keys by default, while OpenSSL 1.0.0 generates PKCS#8 keys.
-// OpenSSL ecparam generates SEC1 EC private keys for ECDSA. We try all three.
+// OpenSSL ecparam generates SEC1 EC private keys for ECDSA.  We try all three.
 //
 // TODO(a.garipov): Find out if this version of parsePrivateKey from the stdlib
 // is actually necessary.
@@ -750,7 +786,7 @@ func marshalTLS(w http.ResponseWriter, r *http.Request, data tlsConfig) {
 		data.PrivateKey = ""
 	}
 
-	_ = aghhttp.WriteJSONResponse(w, r, data)
+	aghhttp.WriteJSONResponseOK(w, r, data)
 }
 
 // registerWebHandlers registers HTTP handlers for TLS configuration.

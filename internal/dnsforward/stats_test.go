@@ -1,7 +1,7 @@
 package dnsforward
 
 import (
-	"net"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -31,7 +31,7 @@ func (l *testQueryLog) Add(p *querylog.AddParams) {
 }
 
 // ShouldLog implements the [querylog.QueryLog] interface for *testQueryLog.
-func (l *testQueryLog) ShouldLog(string, uint16, uint16) bool {
+func (l *testQueryLog) ShouldLog(string, uint16, uint16, []string) bool {
 	return true
 }
 
@@ -41,24 +41,31 @@ type testStats struct {
 	// without actually implementing all methods.
 	stats.Interface
 
-	lastEntry stats.Entry
+	lastEntry *stats.Entry
 }
 
 // Update implements the [stats.Interface] interface for *testStats.
-func (l *testStats) Update(e stats.Entry) {
+func (l *testStats) Update(e *stats.Entry) {
+	if e.Domain == "" {
+		return
+	}
+
 	l.lastEntry = e
 }
 
 // ShouldCount implements the [stats.Interface] interface for *testStats.
-func (l *testStats) ShouldCount(string, uint16, uint16) bool {
+func (l *testStats) ShouldCount(string, uint16, uint16, []string) bool {
 	return true
 }
 
-func TestProcessQueryLogsAndStats(t *testing.T) {
+func TestServer_ProcessQueryLogsAndStats(t *testing.T) {
+	const domain = "example.com."
+
 	testCases := []struct {
 		name           string
+		domain         string
 		proto          proxy.Proto
-		addr           net.Addr
+		addr           netip.AddrPort
 		clientID       string
 		wantLogProto   querylog.ClientProto
 		wantStatClient string
@@ -67,8 +74,9 @@ func TestProcessQueryLogsAndStats(t *testing.T) {
 		wantStatResult stats.Result
 	}{{
 		name:           "success_udp",
+		domain:         domain,
 		proto:          proxy.ProtoUDP,
-		addr:           &net.UDPAddr{IP: net.IP{1, 2, 3, 4}, Port: 1234},
+		addr:           testClientAddrPort,
 		clientID:       "",
 		wantLogProto:   "",
 		wantStatClient: "1.2.3.4",
@@ -77,8 +85,9 @@ func TestProcessQueryLogsAndStats(t *testing.T) {
 		wantStatResult: stats.RNotFiltered,
 	}, {
 		name:           "success_tls_clientid",
+		domain:         domain,
 		proto:          proxy.ProtoTLS,
-		addr:           &net.TCPAddr{IP: net.IP{1, 2, 3, 4}, Port: 1234},
+		addr:           testClientAddrPort,
 		clientID:       "cli42",
 		wantLogProto:   querylog.ClientProtoDoT,
 		wantStatClient: "cli42",
@@ -87,8 +96,9 @@ func TestProcessQueryLogsAndStats(t *testing.T) {
 		wantStatResult: stats.RNotFiltered,
 	}, {
 		name:           "success_tls",
+		domain:         domain,
 		proto:          proxy.ProtoTLS,
-		addr:           &net.TCPAddr{IP: net.IP{1, 2, 3, 4}, Port: 1234},
+		addr:           testClientAddrPort,
 		clientID:       "",
 		wantLogProto:   querylog.ClientProtoDoT,
 		wantStatClient: "1.2.3.4",
@@ -97,8 +107,9 @@ func TestProcessQueryLogsAndStats(t *testing.T) {
 		wantStatResult: stats.RNotFiltered,
 	}, {
 		name:           "success_quic",
+		domain:         domain,
 		proto:          proxy.ProtoQUIC,
-		addr:           &net.UDPAddr{IP: net.IP{1, 2, 3, 4}, Port: 1234},
+		addr:           testClientAddrPort,
 		clientID:       "",
 		wantLogProto:   querylog.ClientProtoDoQ,
 		wantStatClient: "1.2.3.4",
@@ -107,8 +118,9 @@ func TestProcessQueryLogsAndStats(t *testing.T) {
 		wantStatResult: stats.RNotFiltered,
 	}, {
 		name:           "success_https",
+		domain:         domain,
 		proto:          proxy.ProtoHTTPS,
-		addr:           &net.TCPAddr{IP: net.IP{1, 2, 3, 4}, Port: 1234},
+		addr:           testClientAddrPort,
 		clientID:       "",
 		wantLogProto:   querylog.ClientProtoDoH,
 		wantStatClient: "1.2.3.4",
@@ -117,8 +129,9 @@ func TestProcessQueryLogsAndStats(t *testing.T) {
 		wantStatResult: stats.RNotFiltered,
 	}, {
 		name:           "success_dnscrypt",
+		domain:         domain,
 		proto:          proxy.ProtoDNSCrypt,
-		addr:           &net.TCPAddr{IP: net.IP{1, 2, 3, 4}, Port: 1234},
+		addr:           testClientAddrPort,
 		clientID:       "",
 		wantLogProto:   querylog.ClientProtoDNSCrypt,
 		wantStatClient: "1.2.3.4",
@@ -127,8 +140,9 @@ func TestProcessQueryLogsAndStats(t *testing.T) {
 		wantStatResult: stats.RNotFiltered,
 	}, {
 		name:           "success_udp_filtered",
+		domain:         domain,
 		proto:          proxy.ProtoUDP,
-		addr:           &net.UDPAddr{IP: net.IP{1, 2, 3, 4}, Port: 1234},
+		addr:           testClientAddrPort,
 		clientID:       "",
 		wantLogProto:   "",
 		wantStatClient: "1.2.3.4",
@@ -137,8 +151,9 @@ func TestProcessQueryLogsAndStats(t *testing.T) {
 		wantStatResult: stats.RFiltered,
 	}, {
 		name:           "success_udp_sb",
+		domain:         domain,
 		proto:          proxy.ProtoUDP,
-		addr:           &net.UDPAddr{IP: net.IP{1, 2, 3, 4}, Port: 1234},
+		addr:           testClientAddrPort,
 		clientID:       "",
 		wantLogProto:   "",
 		wantStatClient: "1.2.3.4",
@@ -147,8 +162,9 @@ func TestProcessQueryLogsAndStats(t *testing.T) {
 		wantStatResult: stats.RSafeBrowsing,
 	}, {
 		name:           "success_udp_ss",
+		domain:         domain,
 		proto:          proxy.ProtoUDP,
-		addr:           &net.UDPAddr{IP: net.IP{1, 2, 3, 4}, Port: 1234},
+		addr:           testClientAddrPort,
 		clientID:       "",
 		wantLogProto:   "",
 		wantStatClient: "1.2.3.4",
@@ -157,11 +173,23 @@ func TestProcessQueryLogsAndStats(t *testing.T) {
 		wantStatResult: stats.RSafeSearch,
 	}, {
 		name:           "success_udp_pc",
+		domain:         domain,
 		proto:          proxy.ProtoUDP,
-		addr:           &net.UDPAddr{IP: net.IP{1, 2, 3, 4}, Port: 1234},
+		addr:           testClientAddrPort,
 		clientID:       "",
 		wantLogProto:   "",
 		wantStatClient: "1.2.3.4",
+		wantCode:       resultCodeSuccess,
+		reason:         filtering.FilteredParental,
+		wantStatResult: stats.RParental,
+	}, {
+		name:           "success_udp_pc_empty_fqdn",
+		domain:         ".",
+		proto:          proxy.ProtoUDP,
+		addr:           netip.MustParseAddrPort("4.3.2.1:1234"),
+		clientID:       "",
+		wantLogProto:   "",
+		wantStatClient: "4.3.2.1",
 		wantCode:       resultCodeSuccess,
 		reason:         filtering.FilteredParental,
 		wantStatResult: stats.RParental,
@@ -181,7 +209,7 @@ func TestProcessQueryLogsAndStats(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := &dns.Msg{
 				Question: []dns.Question{{
-					Name: "example.com.",
+					Name: tc.domain,
 				}},
 			}
 			pctx := &proxy.DNSContext{

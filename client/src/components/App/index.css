@@ -30,6 +30,11 @@
     --loading-bg: rgba(255, 255, 255, 0.48);
     --font-family-monospace: Monaco, Menlo, "Ubuntu Mono", Consolas, source-code-pro, monospace;
     --font-size-disable-autozoom: 1rem;
+    --alert-message-color: #24426c;
+    --alert-message-border: #cbdbf2;
+    --alert-message-bg: #dae5f5;
+    --checkbox-bg: #e2e2e2;
+    --radio-bg: #ffffff;
 }
 
 [data-theme="dark"] {
@@ -59,6 +64,11 @@
     --detailed-info-color: #fff;
     --gray300: #f3f3f3;
     --loading-bg: #131313;
+    --alert-message-color: #e6e6e6;
+    --alert-message-border: #363648;
+    --alert-message-bg: #363648;
+    --checkbox-bg: #a4a4a4;
+    --radio-bg: #a4a4a4;
 }
 
 body {
@@ -79,18 +89,18 @@ body {
 }
 
 .container--wrap {
-    min-height: calc(100vh - 160px);
+    min-height: calc(100vh - 372px);
+}
+
+@media screen and (min-width: 768px) {
+    .container--wrap {
+        min-height: calc(100vh - 168px);
+    }
 }
 
 @media screen and (min-width: 992px) {
     .container--wrap {
-        min-height: calc(100vh - 117px);
-    }
-}
-
-@media screen and (max-width: 992px) {
-    .container--wrap {
-        min-height: calc(100vh);
+        min-height: calc(100vh - 187px);
     }
 }
 
@@ -108,6 +118,11 @@ body {
     overflow-y: auto;
 }
 
+.modal-body--filters {
+    max-height: 600px;
+    overflow-y: auto;
+}
+
 .modal-body__item:not(:first-child) {
     padding-top: 1.5rem;
 }
@@ -122,15 +137,6 @@ body {
 
 .cursor--not-allowed {
     cursor: not-allowed;
-}
-
-.button-action {
-    visibility: hidden;
-}
-
-.logs__row:hover .button-action,
-.button-action--active {
-    visibility: visible;
 }
 
 .ReactModal__Body--open {

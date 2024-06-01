@@ -1,5 +1,11 @@
 import { handleActions } from 'redux-actions';
 import { normalizeTopClients } from '../helpers/helpers';
+import {
+    DAY,
+    HOUR,
+    STATS_INTERVALS_DAYS,
+    TIME_UNITS,
+} from '../helpers/constants';
 
 import * as actions from '../actions/stats';
 
@@ -17,6 +23,7 @@ const defaultStats = {
     numReplacedSafebrowsing: 0,
     numReplacedSafesearch: 0,
     avgProcessingTime: 0,
+    timeUnits: TIME_UNITS.HOURS,
 };
 
 const stats = handleActions(
@@ -25,7 +32,10 @@ const stats = handleActions(
         [actions.getStatsConfigFailure]: (state) => ({ ...state, processingGetConfig: false }),
         [actions.getStatsConfigSuccess]: (state, { payload }) => ({
             ...state,
-            interval: payload.interval,
+            ...payload,
+            customInterval: !STATS_INTERVALS_DAYS.includes(payload.interval)
+                ? payload.interval / HOUR
+                : null,
             processingGetConfig: false,
         }),
 
@@ -33,7 +43,7 @@ const stats = handleActions(
         [actions.setStatsConfigFailure]: (state) => ({ ...state, processingSetConfig: false }),
         [actions.setStatsConfigSuccess]: (state, { payload }) => ({
             ...state,
-            interval: payload.interval,
+            ...payload,
             processingSetConfig: false,
         }),
 
@@ -54,6 +64,9 @@ const stats = handleActions(
                 num_replaced_safebrowsing: numReplacedSafebrowsing,
                 num_replaced_safesearch: numReplacedSafesearch,
                 avg_processing_time: avgProcessingTime,
+                top_upstreams_responses: topUpstreamsResponses,
+                top_upstrems_avg_time: topUpstreamsAvgTime,
+                time_units: timeUnits,
             } = payload;
 
             const newState = {
@@ -73,6 +86,9 @@ const stats = handleActions(
                 numReplacedSafebrowsing,
                 numReplacedSafesearch,
                 avgProcessingTime,
+                topUpstreamsResponses,
+                topUpstreamsAvgTime,
+                timeUnits,
             };
 
             return newState;
@@ -91,7 +107,8 @@ const stats = handleActions(
         processingSetConfig: false,
         processingStats: true,
         processingReset: false,
-        interval: 1,
+        interval: DAY,
+        customInterval: null,
         ...defaultStats,
     },
 );

@@ -11,8 +11,14 @@ import Select from 'react-select';
 import i18n from '../../../i18n';
 import Tabs from '../../ui/Tabs';
 import Examples from '../Dns/Upstream/Examples';
-import { toggleAllServices, trimLinesAndRemoveEmpty } from '../../../helpers/helpers';
+import { ScheduleForm } from '../../Filters/Services/ScheduleForm';
 import {
+    toggleAllServices,
+    trimLinesAndRemoveEmpty,
+    captitalizeWords,
+} from '../../../helpers/helpers';
+import {
+    toNumber,
     renderInputField,
     renderGroupField,
     CheckboxField,
@@ -20,7 +26,7 @@ import {
     renderTextareaField,
 } from '../../../helpers/form';
 import { validateClientId, validateRequiredValue } from '../../../helpers/validators';
-import { CLIENT_ID_LINK, FORM_NAME } from '../../../helpers/constants';
+import { CLIENT_ID_LINK, FORM_NAME, UINT32_RANGE } from '../../../helpers/constants';
 import './Service.css';
 
 const settingsCheckboxes = [
@@ -40,9 +46,16 @@ const settingsCheckboxes = [
         name: 'parental_enabled',
         placeholder: 'use_adguard_parental',
     },
+];
+
+const logAndStatsCheckboxes = [
     {
-        name: 'safesearch_enabled',
-        placeholder: 'enforce_safe_search',
+        name: 'ignore_querylog',
+        placeholder: 'ignore_query_log',
+    },
+    {
+        name: 'ignore_statistics',
+        placeholder: 'ignore_statistics',
     },
 ];
 const validate = (values) => {
@@ -130,24 +143,35 @@ let Form = (props) => {
         handleSubmit,
         reset,
         change,
-        pristine,
         submitting,
         useGlobalSettings,
         useGlobalServices,
-        toggleClientModal,
+        blockedServicesSchedule,
+        handleClose,
         processingAdding,
         processingUpdating,
         invalid,
         tagsOptions,
+        initialValues,
     } = props;
     const services = useSelector((store) => store?.services);
+    const { safe_search } = initialValues;
+    const safeSearchServices = { ...safe_search };
+    delete safeSearchServices.enabled;
 
     const [activeTabLabel, setActiveTabLabel] = useState('settings');
+
+    const handleScheduleSubmit = (values) => {
+        change('blocked_services_schedule', { ...values });
+    };
 
     const tabs = {
         settings: {
             title: 'settings',
             component: <div label="settings" title={props.t('main_settings')}>
+                <div className="form__label--bot form__label--bold">
+                    {t('protection_section_label')}
+                </div>
                 {settingsCheckboxes.map((setting) => (
                     <div className="form__group" key={setting.name}>
                         <Field
@@ -160,6 +184,41 @@ let Form = (props) => {
                                     ? useGlobalSettings
                                     : false
                             }
+                        />
+                    </div>
+                ))}
+                <div className="form__group">
+                    <Field
+                        name="safe_search.enabled"
+                        type="checkbox"
+                        component={CheckboxField}
+                        placeholder={t('enforce_safe_search')}
+                        disabled={useGlobalSettings}
+                    />
+                </div>
+                <div className='form__group--inner'>
+                    {Object.keys(safeSearchServices).map((searchKey) => (
+                        <div key={searchKey}>
+                            <Field
+                                name={`safe_search.${searchKey}`}
+                                type="checkbox"
+                                component={CheckboxField}
+                                placeholder={captitalizeWords(searchKey)}
+                                disabled={useGlobalSettings}
+                            />
+                        </div>
+                    ))}
+                </div>
+                <div className="form__label--bold form__label--top form__label--bot">
+                    {t('log_and_stats_section_label')}
+                </div>
+                {logAndStatsCheckboxes.map((setting) => (
+                    <div className="form__group" key={setting.name}>
+                        <Field
+                            name={setting.name}
+                            type="checkbox"
+                            component={CheckboxField}
+                            placeholder={t(setting.placeholder)}
                         />
                     </div>
                 ))}
@@ -220,6 +279,21 @@ let Form = (props) => {
                 </div>
             </div>,
         },
+        schedule_services: {
+            title: 'schedule_services',
+            component: (
+                <>
+                    <div className="form__desc mb-4">
+                        <Trans>schedule_services_desc_client</Trans>
+                    </div>
+                    <ScheduleForm
+                        schedule={blockedServicesSchedule}
+                        onScheduleSubmit={handleScheduleSubmit}
+                        clientForm
+                    />
+                </>
+            ),
+        },
         upstream_dns: {
             title: 'upstream_dns',
             component: <div label="upstream" title={props.t('upstream_dns')}>
@@ -238,6 +312,35 @@ let Form = (props) => {
                     normalizeOnBlur={trimLinesAndRemoveEmpty}
                 />
                 <Examples />
+                <div className="form__label--bold mt-5 mb-3">
+                    {t('upstream_dns_cache_configuration')}
+                </div>
+                <div className="form__group mb-2">
+                    <Field
+                        name="upstreams_cache_enabled"
+                        type="checkbox"
+                        component={CheckboxField}
+                        placeholder={t('enable_upstream_dns_cache')}
+                    />
+                </div>
+                <div className="form__group form__group--settings">
+                    <label
+                        htmlFor="upstreams_cache_size"
+                        className="form__label"
+                    >
+                        {t('dns_cache_size')}
+                    </label>
+                    <Field
+                        name="upstreams_cache_size"
+                        type="number"
+                        component={renderInputField}
+                        placeholder={t('enter_cache_size')}
+                        className="form-control"
+                        normalize={toNumber}
+                        min={0}
+                        max={UINT32_RANGE.MAX}
+                    />
+                </div>
             </div>,
         },
     };
@@ -268,7 +371,7 @@ let Form = (props) => {
                         </div>
                         <div className="form__desc mt-0 mb-2">
                             <Trans components={[
-                                <a target="_blank" rel="noopener noreferrer" href="https://github.com/AdguardTeam/AdGuardHome/wiki/Hosts-Blocklists#ctag"
+                                <a target="_blank" rel="noopener noreferrer" href="https://link.adtidy.org/forward.html?action=dns_kb_filtering_syntax_ctag&from=ui&app=home"
                                    key="0">link</a>,
                             ]}>
                                 tags_desc
@@ -306,8 +409,12 @@ let Form = (props) => {
                     </div>
                 </div>
 
-                <Tabs controlClass="form" tabs={tabs} activeTabLabel={activeTabLabel}
-                      setActiveTabLabel={setActiveTabLabel}>
+                <Tabs
+                    controlClass="form"
+                    tabs={tabs}
+                    activeTabLabel={activeTabLabel}
+                    setActiveTabLabel={setActiveTabLabel}
+                >
                     {activeTab}
                 </Tabs>
             </div>
@@ -320,7 +427,7 @@ let Form = (props) => {
                         disabled={submitting}
                         onClick={() => {
                             reset();
-                            toggleClientModal();
+                            handleClose();
                         }}
                     >
                         <Trans>cancel_btn</Trans>
@@ -331,7 +438,6 @@ let Form = (props) => {
                         disabled={
                             submitting
                             || invalid
-                            || pristine
                             || processingAdding
                             || processingUpdating
                         }
@@ -350,14 +456,16 @@ Form.propTypes = {
     reset: PropTypes.func.isRequired,
     change: PropTypes.func.isRequired,
     submitting: PropTypes.bool.isRequired,
-    toggleClientModal: PropTypes.func.isRequired,
+    handleClose: PropTypes.func.isRequired,
     useGlobalSettings: PropTypes.bool,
     useGlobalServices: PropTypes.bool,
+    blockedServicesSchedule: PropTypes.object,
     t: PropTypes.func.isRequired,
     processingAdding: PropTypes.bool.isRequired,
     processingUpdating: PropTypes.bool.isRequired,
     invalid: PropTypes.bool.isRequired,
     tagsOptions: PropTypes.array.isRequired,
+    initialValues: PropTypes.object,
 };
 
 const selector = formValueSelector(FORM_NAME.CLIENT);
@@ -365,9 +473,11 @@ const selector = formValueSelector(FORM_NAME.CLIENT);
 Form = connect((state) => {
     const useGlobalSettings = selector(state, 'use_global_settings');
     const useGlobalServices = selector(state, 'use_global_blocked_services');
+    const blockedServicesSchedule = selector(state, 'blocked_services_schedule');
     return {
         useGlobalSettings,
         useGlobalServices,
+        blockedServicesSchedule,
     };
 })(Form);
 

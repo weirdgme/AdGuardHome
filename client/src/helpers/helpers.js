@@ -25,7 +25,9 @@ import {
     STANDARD_HTTPS_PORT,
     STANDARD_WEB_PORT,
     SPECIAL_FILTER_ID,
+    THEMES,
 } from './constants';
+import { LOCAL_STORAGE_KEYS, LocalStorageHelper } from './localStorageHelper';
 
 /**
  * @param time {string} The time to format
@@ -388,6 +390,12 @@ export const toggleAllServices = (services, change, isSelected) => {
     services.forEach((service) => change(`blocked_services.${service.id}`, isSelected));
 };
 
+export const msToSeconds = (milliseconds) => Math.floor(milliseconds / 1000);
+
+export const msToMinutes = (milliseconds) => Math.floor(milliseconds / 1000 / 60);
+
+export const msToHours = (milliseconds) => Math.floor(milliseconds / 1000 / 60 / 60);
+
 export const secondsToMilliseconds = (seconds) => {
     if (seconds) {
         return seconds * 1000;
@@ -395,6 +403,8 @@ export const secondsToMilliseconds = (seconds) => {
 
     return seconds;
 };
+
+export const msToDays = (milliseconds) => Math.floor(milliseconds / 1000 / 60 / 60 / 24);
 
 export const normalizeRulesTextarea = (text) => text?.replace(/^\n/g, '')
     .replace(/\n\s*\n/g, '\n');
@@ -671,12 +681,36 @@ export const setHtmlLangAttr = (language) => {
 };
 
 /**
+ * Set local storage theme field
+ *
+ * @param {string} theme
+ */
+export const setTheme = (theme) => {
+    LocalStorageHelper.setItem(LOCAL_STORAGE_KEYS.THEME, theme);
+};
+
+/**
+ * Get local storage theme field
+ *
+ * @returns {string}
+ */
+
+export const getTheme = () => LocalStorageHelper.getItem(LOCAL_STORAGE_KEYS.THEME) || THEMES.light;
+
+/**
  * Sets UI theme.
  *
  * @param theme
  */
 export const setUITheme = (theme) => {
-    document.body.dataset.theme = theme;
+    let currentTheme = theme || getTheme();
+
+    if (currentTheme === THEMES.auto) {
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        currentTheme = prefersDark ? THEMES.dark : THEMES.light;
+    }
+    setTheme(currentTheme);
+    document.body.dataset.theme = currentTheme;
 };
 
 /**
@@ -786,7 +820,6 @@ export const sortIp = (a, b) => {
         return 0;
     }
 };
-
 
 /**
  * @param {number} filterId

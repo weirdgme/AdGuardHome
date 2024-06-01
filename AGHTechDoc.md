@@ -399,6 +399,7 @@ Response:
 	"protection_enabled":true,
 	"running":true,
 	"dhcp_available":true,
+    "protection_disabled_duration":0
 	"version":"undefined"
 	}
 
@@ -834,7 +835,7 @@ Request:
 Response:
 
 	200 OK
-	
+
 ### API: Validate TLS configuration
 
 Request:
@@ -2007,7 +2008,7 @@ Request:
 Response:
 
 	200 OK
-	
+
     DOH plist file
 
 ## API: Get DNS over TLS .mobileconfig

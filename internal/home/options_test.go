@@ -67,11 +67,11 @@ func TestParseBindHost(t *testing.T) {
 }
 
 func TestParseBindPort(t *testing.T) {
-	assert.Equal(t, 0, testParseOK(t).bindPort, "empty is port 0")
-	assert.Equal(t, 65535, testParseOK(t, "-p", "65535").bindPort, "-p is port")
+	assert.Equal(t, uint16(0), testParseOK(t).bindPort, "empty is port 0")
+	assert.Equal(t, uint16(65535), testParseOK(t, "-p", "65535").bindPort, "-p is port")
 	testParseParamMissing(t, "-p")
 
-	assert.Equal(t, 65535, testParseOK(t, "--port", "65535").bindPort, "--port is port")
+	assert.Equal(t, uint16(65535), testParseOK(t, "--port", "65535").bindPort, "--port is port")
 	testParseParamMissing(t, "--port")
 
 	testParseErr(t, "not an int", "-p", "x")
@@ -80,6 +80,23 @@ func TestParseBindPort(t *testing.T) {
 	testParseErr(t, "port too high", "-p", "65536")
 	testParseErr(t, "port too high", "-p", "4294967297")           // 2^32 + 1
 	testParseErr(t, "port too high", "-p", "18446744073709551617") // 2^64 + 1
+}
+
+func TestParseBindAddr(t *testing.T) {
+	wantAddrPort := netip.MustParseAddrPort("1.2.3.4:8089")
+
+	assert.Zero(t, testParseOK(t).bindAddr, "empty is not web-addr")
+
+	assert.Equal(t, wantAddrPort, testParseOK(t, "--web-addr", "1.2.3.4:8089").bindAddr)
+	assert.Equal(t, netip.MustParseAddrPort("1.2.3.4:0"), testParseOK(t, "--web-addr", "1.2.3.4:0").bindAddr)
+	testParseParamMissing(t, "-web-addr")
+
+	testParseErr(t, "not an int", "--web-addr", "1.2.3.4:x")
+	testParseErr(t, "hex not supported", "--web-addr", "1.2.3.4:0x100")
+	testParseErr(t, "port negative", "--web-addr", "1.2.3.4:-1")
+	testParseErr(t, "port too high", "--web-addr", "1.2.3.4:65536")
+	testParseErr(t, "port too high", "--web-addr", "1.2.3.4:4294967297")           // 2^32 + 1
+	testParseErr(t, "port too high", "--web-addr", "1.2.3.4:18446744073709551617") // 2^64 + 1
 }
 
 func TestParseLogfile(t *testing.T) {
@@ -162,6 +179,10 @@ func TestOptsToArgs(t *testing.T) {
 		name: "bind_port",
 		args: []string{"-p", "666"},
 		opts: options{bindPort: 666},
+	}, {
+		name: "web-addr",
+		args: []string{"--web-addr", "1.2.3.4:8080"},
+		opts: options{bindAddr: netip.MustParseAddrPort("1.2.3.4:8080")},
 	}, {
 		name: "log_file",
 		args: []string{"-l", "path"},

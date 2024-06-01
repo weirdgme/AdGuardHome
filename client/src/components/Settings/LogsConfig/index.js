@@ -4,19 +4,28 @@ import { withTranslation } from 'react-i18next';
 
 import Card from '../../ui/Card';
 import Form from './Form';
+import { HOUR } from '../../../helpers/constants';
 
 class LogsConfig extends Component {
     handleFormSubmit = (values) => {
         const { t, interval: prevInterval } = this.props;
-        const { interval } = values;
+        const { interval, customInterval, ...rest } = values;
 
-        if (interval !== prevInterval) {
+        const newInterval = customInterval ? customInterval * HOUR : interval;
+
+        const data = {
+            ...rest,
+            ignored: values.ignored ? values.ignored.split('\n') : [],
+            interval: newInterval,
+        };
+
+        if (newInterval < prevInterval) {
             // eslint-disable-next-line no-alert
             if (window.confirm(t('query_log_retention_confirm'))) {
-                this.props.setLogsConfig(values);
+                this.props.setLogsConfig(data);
             }
         } else {
-            this.props.setLogsConfig(values);
+            this.props.setLogsConfig(data);
         }
     };
 
@@ -30,7 +39,14 @@ class LogsConfig extends Component {
 
     render() {
         const {
-            t, enabled, interval, processing, processingClear, anonymize_client_ip,
+            t,
+            enabled,
+            interval,
+            processing,
+            processingClear,
+            anonymize_client_ip,
+            ignored,
+            customInterval,
         } = this.props;
 
         return (
@@ -44,7 +60,9 @@ class LogsConfig extends Component {
                         initialValues={{
                             enabled,
                             interval,
+                            customInterval,
                             anonymize_client_ip,
+                            ignored: ignored?.join('\n'),
                         }}
                         onSubmit={this.handleFormSubmit}
                         processing={processing}
@@ -59,9 +77,11 @@ class LogsConfig extends Component {
 
 LogsConfig.propTypes = {
     interval: PropTypes.number.isRequired,
+    customInterval: PropTypes.number,
     enabled: PropTypes.bool.isRequired,
     anonymize_client_ip: PropTypes.bool.isRequired,
     processing: PropTypes.bool.isRequired,
+    ignored: PropTypes.array.isRequired,
     processingClear: PropTypes.bool.isRequired,
     setLogsConfig: PropTypes.func.isRequired,
     clearLogs: PropTypes.func.isRequired,

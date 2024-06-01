@@ -6,21 +6,23 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 
 	"github.com/AdguardTeam/AdGuardHome/internal/aghalg"
 	"github.com/AdguardTeam/AdGuardHome/internal/aghtls"
+	"github.com/AdguardTeam/AdGuardHome/internal/configmigrate"
 	"github.com/AdguardTeam/AdGuardHome/internal/dhcpd"
 	"github.com/AdguardTeam/AdGuardHome/internal/dnsforward"
 	"github.com/AdguardTeam/AdGuardHome/internal/filtering"
 	"github.com/AdguardTeam/AdGuardHome/internal/querylog"
+	"github.com/AdguardTeam/AdGuardHome/internal/schedule"
 	"github.com/AdguardTeam/AdGuardHome/internal/stats"
 	"github.com/AdguardTeam/dnsproxy/fastip"
 	"github.com/AdguardTeam/golibs/errors"
 	"github.com/AdguardTeam/golibs/log"
+	"github.com/AdguardTeam/golibs/netutil"
 	"github.com/AdguardTeam/golibs/timeutil"
-	"github.com/google/renameio/maybe"
+	"github.com/google/renameio/v2/maybe"
 	yaml "gopkg.in/yaml.v3"
 )
 
@@ -29,32 +31,30 @@ import (
 const dataDir = "data"
 
 // logSettings are the logging settings part of the configuration file.
-//
-// TODO(a.garipov): Put them into a separate object.
 type logSettings struct {
 	// File is the path to the log file.  If empty, logs are written to stdout.
 	// If "syslog", logs are written to syslog.
-	File string `yaml:"log_file"`
+	File string `yaml:"file"`
 
 	// MaxBackups is the maximum number of old log files to retain.
 	//
 	// NOTE: MaxAge may still cause them to get deleted.
-	MaxBackups int `yaml:"log_max_backups"`
+	MaxBackups int `yaml:"max_backups"`
 
 	// MaxSize is the maximum size of the log file before it gets rotated, in
 	// megabytes.  The default value is 100 MB.
-	MaxSize int `yaml:"log_max_size"`
+	MaxSize int `yaml:"max_size"`
 
 	// MaxAge is the maximum duration for retaining old log files, in days.
-	MaxAge int `yaml:"log_max_age"`
+	MaxAge int `yaml:"max_age"`
 
 	// Compress determines, if the rotated log files should be compressed using
 	// gzip.
-	Compress bool `yaml:"log_compress"`
+	Compress bool `yaml:"compress"`
 
 	// LocalTime determines, if the time used for formatting the timestamps in
 	// is the computer's local time.
-	LocalTime bool `yaml:"log_localtime"`
+	LocalTime bool `yaml:"local_time"`
 
 	// Verbose determines, if verbose (aka debug) logging is enabled.
 	Verbose bool `yaml:"verbose"`
@@ -75,23 +75,32 @@ type osConfig struct {
 
 type clientsConfig struct {
 	// Sources defines the set of sources to fetch the runtime clients from.
-	Sources *clientSourcesConf `yaml:"runtime_sources"`
+	Sources *clientSourcesConfig `yaml:"runtime_sources"`
 	// Persistent are the configured clients.
 	Persistent []*clientObject `yaml:"persistent"`
 }
 
-// configuration is loaded from YAML
-// field ordering is important -- yaml fields will mirror ordering from here
+// clientSourceConfig is used to configure where the runtime clients will be
+// obtained from.
+type clientSourcesConfig struct {
+	WHOIS     bool `yaml:"whois"`
+	ARP       bool `yaml:"arp"`
+	RDNS      bool `yaml:"rdns"`
+	DHCP      bool `yaml:"dhcp"`
+	HostsFile bool `yaml:"hosts"`
+}
+
+// configuration is loaded from YAML.
+//
+// Field ordering is important, YAML fields better not to be reordered, if it's
+// not absolutely necessary.
 type configuration struct {
 	// Raw file data to avoid re-reading of configuration file
 	// It's reset after config is parsed
 	fileData []byte
 
-	// BindHost is the address for the web interface server to listen on.
-	BindHost netip.Addr `yaml:"bind_host"`
-	// BindPort is the port for the web interface server to listen on.
-	BindPort int `yaml:"bind_port"`
-
+	// HTTPConfig is the block with http conf.
+	HTTPConfig httpConfig `yaml:"http"`
 	// Users are the clients capable for accessing the web interface.
 	Users []webUser `yaml:"users"`
 	// AuthAttempts is the maximum number of failed login attempts a user
@@ -106,13 +115,9 @@ type configuration struct {
 	Language string `yaml:"language"`
 	// Theme is a UI theme for current user.
 	Theme Theme `yaml:"theme"`
-	// DebugPProf defines if the profiling HTTP handler will listen on :6060.
-	DebugPProf bool `yaml:"debug_pprof"`
 
-	// TTL for a web session (in hours)
-	// An active session is automatically refreshed once a day.
-	WebSessionTTLHours uint32 `yaml:"web_session_ttl"`
-
+	// TODO(a.garipov): Make DNS and the fields below pointers and validate
+	// and/or reset on explicit nulling.
 	DNS      dnsConfig         `yaml:"dns"`
 	TLS      tlsConfigSettings `yaml:"tls"`
 	QueryLog queryLogConfig    `yaml:"querylog"`
@@ -129,81 +134,130 @@ type configuration struct {
 	WhitelistFilters []filtering.FilterYAML `yaml:"whitelist_filters"`
 	UserRules        []string               `yaml:"user_rules"`
 
-	DHCP *dhcpd.ServerConfig `yaml:"dhcp"`
+	DHCP      *dhcpd.ServerConfig `yaml:"dhcp"`
+	Filtering *filtering.Config   `yaml:"filtering"`
 
 	// Clients contains the YAML representations of the persistent clients.
 	// This field is only used for reading and writing persistent client data.
 	// Keep this field sorted to ensure consistent ordering.
 	Clients *clientsConfig `yaml:"clients"`
 
-	logSettings `yaml:",inline"`
+	// Log is a block with log configuration settings.
+	Log logSettings `yaml:"log"`
 
 	OSConfig *osConfig `yaml:"os"`
 
 	sync.RWMutex `yaml:"-"`
 
-	SchemaVersion int `yaml:"schema_version"` // keeping last so that users will be less tempted to change it -- used when upgrading between versions
+	// SchemaVersion is the version of the configuration schema.  See
+	// [configmigrate.LastSchemaVersion].
+	SchemaVersion uint `yaml:"schema_version"`
 }
 
-// field ordering is important -- yaml fields will mirror ordering from here
+// httpConfig is a block with HTTP configuration params.
+//
+// Field ordering is important, YAML fields better not to be reordered, if it's
+// not absolutely necessary.
+type httpConfig struct {
+	// Pprof defines the profiling HTTP handler.
+	Pprof *httpPprofConfig `yaml:"pprof"`
+
+	// Address is the address to serve the web UI on.
+	Address netip.AddrPort
+
+	// SessionTTL for a web session.
+	// An active session is automatically refreshed once a day.
+	SessionTTL timeutil.Duration `yaml:"session_ttl"`
+}
+
+// httpPprofConfig is the block with pprof HTTP configuration.
+type httpPprofConfig struct {
+	// Port for the profiling handler.
+	Port uint16 `yaml:"port"`
+
+	// Enabled defines if the profiling handler is enabled.
+	Enabled bool `yaml:"enabled"`
+}
+
+// dnsConfig is a block with DNS configuration params.
+//
+// Field ordering is important, YAML fields better not to be reordered, if it's
+// not absolutely necessary.
 type dnsConfig struct {
 	BindHosts []netip.Addr `yaml:"bind_hosts"`
-	Port      int          `yaml:"port"`
+	Port      uint16       `yaml:"port"`
 
 	// AnonymizeClientIP defines if clients' IP addresses should be anonymized
 	// in query log and statistics.
 	AnonymizeClientIP bool `yaml:"anonymize_client_ip"`
 
-	dnsforward.FilteringConfig `yaml:",inline"`
-
-	DnsfilterConf *filtering.Config `yaml:",inline"`
+	// Config is the embed configuration with DNS params.
+	//
+	// TODO(a.garipov): Remove embed.
+	dnsforward.Config `yaml:",inline"`
 
 	// UpstreamTimeout is the timeout for querying upstream servers.
 	UpstreamTimeout timeutil.Duration `yaml:"upstream_timeout"`
 
 	// PrivateNets is the set of IP networks for which the private reverse DNS
 	// resolver should be used.
-	PrivateNets []string `yaml:"private_networks"`
+	PrivateNets []netutil.Prefix `yaml:"private_networks"`
 
-	// UsePrivateRDNS defines if the PTR requests for unknown addresses from
-	// locally-served networks should be resolved via private PTR resolvers.
+	// UsePrivateRDNS enables resolving requests containing a private IP address
+	// using private reverse DNS resolvers.  See PrivateRDNSResolvers.
+	//
+	// TODO(e.burkov):  Rename in YAML.
 	UsePrivateRDNS bool `yaml:"use_private_ptr_resolvers"`
 
-	// LocalPTRResolvers is the slice of addresses to be used as upstreams
-	// for PTR queries for locally-served networks.
-	LocalPTRResolvers []string `yaml:"local_ptr_upstreams"`
+	// PrivateRDNSResolvers is the slice of addresses to be used as upstreams
+	// for private requests.  It's only used for PTR, SOA, and NS queries,
+	// containing an ARPA subdomain, came from the the client with private
+	// address.  The address considered private according to PrivateNets.
+	//
+	// If empty, the OS-provided resolvers are used for private requests.
+	PrivateRDNSResolvers []string `yaml:"local_ptr_upstreams"`
 
-	// UseDNS64 defines if DNS64 should be used for incoming requests.
+	// UseDNS64 defines if DNS64 should be used for incoming requests.  Requests
+	// of type PTR for addresses within the configured prefixes will be resolved
+	// via [PrivateRDNSResolvers], so those should be valid and UsePrivateRDNS
+	// be set to true.
 	UseDNS64 bool `yaml:"use_dns64"`
 
 	// DNS64Prefixes is the list of NAT64 prefixes to be used for DNS64.
 	DNS64Prefixes []netip.Prefix `yaml:"dns64_prefixes"`
 
-	// ServeHTTP3 defines if HTTP/3 is be allowed for incoming requests.
+	// ServeHTTP3 defines if HTTP/3 is allowed for incoming requests.
 	//
 	// TODO(a.garipov): Add to the UI when HTTP/3 support is no longer
 	// experimental.
 	ServeHTTP3 bool `yaml:"serve_http3"`
 
-	// UseHTTP3Upstreams defines if HTTP/3 is be allowed for DNS-over-HTTPS
+	// UseHTTP3Upstreams defines if HTTP/3 is allowed for DNS-over-HTTPS
 	// upstreams.
 	//
 	// TODO(a.garipov): Add to the UI when HTTP/3 support is no longer
 	// experimental.
 	UseHTTP3Upstreams bool `yaml:"use_http3_upstreams"`
+
+	// ServePlainDNS defines if plain DNS is allowed for incoming requests.
+	ServePlainDNS bool `yaml:"serve_plain_dns"`
+
+	// HostsFileEnabled defines whether to use information from the system hosts
+	// file to resolve queries.
+	HostsFileEnabled bool `yaml:"hostsfile_enabled"`
 }
 
 type tlsConfigSettings struct {
 	Enabled         bool   `yaml:"enabled" json:"enabled"`                                 // Enabled is the encryption (DoT/DoH/HTTPS) status
 	ServerName      string `yaml:"server_name" json:"server_name,omitempty"`               // ServerName is the hostname of your HTTPS/TLS server
 	ForceHTTPS      bool   `yaml:"force_https" json:"force_https"`                         // ForceHTTPS: if true, forces HTTP->HTTPS redirect
-	PortHTTPS       int    `yaml:"port_https" json:"port_https,omitempty"`                 // HTTPS port. If 0, HTTPS will be disabled
-	PortDNSOverTLS  int    `yaml:"port_dns_over_tls" json:"port_dns_over_tls,omitempty"`   // DNS-over-TLS port. If 0, DoT will be disabled
-	PortDNSOverQUIC int    `yaml:"port_dns_over_quic" json:"port_dns_over_quic,omitempty"` // DNS-over-QUIC port. If 0, DoQ will be disabled
+	PortHTTPS       uint16 `yaml:"port_https" json:"port_https,omitempty"`                 // HTTPS port. If 0, HTTPS will be disabled
+	PortDNSOverTLS  uint16 `yaml:"port_dns_over_tls" json:"port_dns_over_tls,omitempty"`   // DNS-over-TLS port. If 0, DoT will be disabled
+	PortDNSOverQUIC uint16 `yaml:"port_dns_over_quic" json:"port_dns_over_quic,omitempty"` // DNS-over-QUIC port. If 0, DoQ will be disabled
 
 	// PortDNSCrypt is the port for DNSCrypt requests.  If it's zero,
 	// DNSCrypt is disabled.
-	PortDNSCrypt int `yaml:"port_dnscrypt" json:"port_dnscrypt"`
+	PortDNSCrypt uint16 `yaml:"port_dnscrypt" json:"port_dnscrypt"`
 	// DNSCryptConfigFile is the path to the DNSCrypt config file.  Must be
 	// set if PortDNSCrypt is not zero.
 	//
@@ -218,62 +272,89 @@ type tlsConfigSettings struct {
 }
 
 type queryLogConfig struct {
+	// DirPath is the custom directory for logs.  If it's empty the default
+	// directory will be used.  See [homeContext.getDataDir].
+	DirPath string `yaml:"dir_path"`
+
+	// Ignored is the list of host names, which should not be written to log.
+	// "." is considered to be the root domain.
+	Ignored []string `yaml:"ignored"`
+
+	// Interval is the interval for query log's files rotation.
+	Interval timeutil.Duration `yaml:"interval"`
+
+	// MemSize is the number of entries kept in memory before they are flushed
+	// to disk.
+	MemSize uint `yaml:"size_memory"`
+
 	// Enabled defines if the query log is enabled.
 	Enabled bool `yaml:"enabled"`
 
 	// FileEnabled defines, if the query log is written to the file.
 	FileEnabled bool `yaml:"file_enabled"`
-
-	// Interval is the interval for query log's files rotation.
-	Interval timeutil.Duration `yaml:"interval"`
-
-	// MemSize is the number of entries kept in memory before they are
-	// flushed to disk.
-	MemSize uint32 `yaml:"size_memory"`
-
-	// Ignored is the list of host names, which should not be written to
-	// log.
-	Ignored []string `yaml:"ignored"`
 }
 
 type statsConfig struct {
-	// Enabled defines if the statistics are enabled.
-	Enabled bool `yaml:"enabled"`
-
-	// Interval is the time interval for flushing statistics to the disk in
-	// days.
-	Interval uint32 `yaml:"interval"`
+	// DirPath is the custom directory for statistics.  If it's empty the
+	// default directory is used.  See [homeContext.getDataDir].
+	DirPath string `yaml:"dir_path"`
 
 	// Ignored is the list of host names, which should not be counted.
 	Ignored []string `yaml:"ignored"`
+
+	// Interval is the retention interval for statistics.
+	Interval timeutil.Duration `yaml:"interval"`
+
+	// Enabled defines if the statistics are enabled.
+	Enabled bool `yaml:"enabled"`
 }
+
+// Default block host constants.
+const (
+	defaultSafeBrowsingBlockHost = "standard-block.dns.adguard.com"
+	defaultParentalBlockHost     = "family-block.dns.adguard.com"
+)
 
 // config is the global configuration structure.
 //
 // TODO(a.garipov, e.burkov): This global is awful and must be removed.
 var config = &configuration{
-	BindPort:           3000,
-	BindHost:           netip.IPv4Unspecified(),
-	AuthAttempts:       5,
-	AuthBlockMin:       15,
-	WebSessionTTLHours: 30 * 24,
+	AuthAttempts: 5,
+	AuthBlockMin: 15,
+	HTTPConfig: httpConfig{
+		Address:    netip.AddrPortFrom(netip.IPv4Unspecified(), 3000),
+		SessionTTL: timeutil.Duration{Duration: 30 * timeutil.Day},
+		Pprof: &httpPprofConfig{
+			Enabled: false,
+			Port:    6060,
+		},
+	},
 	DNS: dnsConfig{
 		BindHosts: []netip.Addr{netip.IPv4Unspecified()},
 		Port:      defaultPortDNS,
-		FilteringConfig: dnsforward.FilteringConfig{
-			ProtectionEnabled:  true, // whether or not use any of filtering features
-			BlockingMode:       dnsforward.BlockingModeDefault,
-			BlockedResponseTTL: 10, // in seconds
-			Ratelimit:          20,
-			RefuseAny:          true,
-			AllServers:         false,
-			HandleDDR:          true,
+		Config: dnsforward.Config{
+			Ratelimit:              20,
+			RatelimitSubnetLenIPv4: 24,
+			RatelimitSubnetLenIPv6: 56,
+			RefuseAny:              true,
+			UpstreamMode:           dnsforward.UpstreamModeLoadBalance,
+			HandleDDR:              true,
 			FastestTimeout: timeutil.Duration{
 				Duration: fastip.DefaultPingWaitTimeout,
 			},
 
-			TrustedProxies: []string{"127.0.0.0/8", "::1/128"},
-			CacheSize:      4 * 1024 * 1024,
+			TrustedProxies: []netutil.Prefix{{
+				Prefix: netip.MustParsePrefix("127.0.0.0/8"),
+			}, {
+				Prefix: netip.MustParsePrefix("::1/128"),
+			}},
+			CacheSize: 4 * 1024 * 1024,
+
+			EDNSClientSubnet: &dnsforward.EDNSClientSubnet{
+				CustomIP:  netip.Addr{},
+				Enabled:   false,
+				UseCustom: false,
+			},
 
 			// set default maximum concurrent queries to 300
 			// we introduced a default limit due to this:
@@ -281,16 +362,10 @@ var config = &configuration{
 			// was later increased to 300 due to https://github.com/AdguardTeam/AdGuardHome/issues/2257
 			MaxGoroutines: 300,
 		},
-		DnsfilterConf: &filtering.Config{
-			SafeBrowsingCacheSize:      1 * 1024 * 1024,
-			SafeSearchCacheSize:        1 * 1024 * 1024,
-			ParentalCacheSize:          1 * 1024 * 1024,
-			CacheTime:                  30,
-			FilteringEnabled:           true,
-			FiltersUpdateIntervalHours: 24,
-		},
-		UpstreamTimeout: timeutil.Duration{Duration: dnsforward.DefaultTimeout},
-		UsePrivateRDNS:  true,
+		UpstreamTimeout:  timeutil.Duration{Duration: dnsforward.DefaultTimeout},
+		UsePrivateRDNS:   true,
+		ServePlainDNS:    true,
+		HostsFileEnabled: true,
 	},
 	TLS: tlsConfigSettings{
 		PortHTTPS:       defaultPortHTTPS,
@@ -306,7 +381,7 @@ var config = &configuration{
 	},
 	Stats: statsConfig{
 		Enabled:  true,
-		Interval: 1,
+		Interval: timeutil.Duration{Duration: 1 * timeutil.Day},
 		Ignored:  []string{},
 	},
 	// NOTE: Keep these parameters in sync with the one put into
@@ -325,6 +400,40 @@ var config = &configuration{
 		URL:     "https://adguardteam.github.io/HostlistsRegistry/assets/filter_2.txt",
 		Name:    "AdAway Default Blocklist",
 	}},
+	Filtering: &filtering.Config{
+		ProtectionEnabled:  true,
+		BlockingMode:       filtering.BlockingModeDefault,
+		BlockedResponseTTL: 10, // in seconds
+
+		FilteringEnabled:           true,
+		FiltersUpdateIntervalHours: 24,
+
+		ParentalEnabled:     false,
+		SafeBrowsingEnabled: false,
+
+		SafeBrowsingCacheSize: 1 * 1024 * 1024,
+		SafeSearchCacheSize:   1 * 1024 * 1024,
+		ParentalCacheSize:     1 * 1024 * 1024,
+		CacheTime:             30,
+
+		SafeSearchConf: filtering.SafeSearchConfig{
+			Enabled:    false,
+			Bing:       true,
+			DuckDuckGo: true,
+			Google:     true,
+			Pixabay:    true,
+			Yandex:     true,
+			YouTube:    true,
+		},
+
+		BlockedServices: &filtering.BlockedServices{
+			Schedule: schedule.EmptyWeekly(),
+			IDs:      []string{},
+		},
+
+		ParentalBlockHost:     defaultParentalBlockHost,
+		SafeBrowsingBlockHost: defaultSafeBrowsingBlockHost,
+	},
 	DHCP: &dhcpd.ServerConfig{
 		LocalDomainName: "lan",
 		Conf4: dhcpd.V4ServerConf{
@@ -336,7 +445,7 @@ var config = &configuration{
 		},
 	},
 	Clients: &clientsConfig{
-		Sources: &clientSourcesConf{
+		Sources: &clientSourcesConfig{
 			WHOIS:     true,
 			ARP:       true,
 			RDNS:      true,
@@ -344,7 +453,7 @@ var config = &configuration{
 			HostsFile: true,
 		},
 	},
-	logSettings: logSettings{
+	Log: logSettings{
 		Compress:   false,
 		LocalTime:  false,
 		MaxBackups: 0,
@@ -352,56 +461,107 @@ var config = &configuration{
 		MaxAge:     3,
 	},
 	OSConfig:      &osConfig{},
-	SchemaVersion: currentSchemaVersion,
+	SchemaVersion: configmigrate.LastSchemaVersion,
 	Theme:         ThemeAuto,
 }
 
-// getConfigFilename returns path to the current config file
-func (c *configuration) getConfigFilename() string {
-	configFile, err := filepath.EvalSymlinks(Context.configFilename)
+// configFilePath returns the absolute path to the symlink-evaluated path to the
+// current config file.
+func configFilePath() (confPath string) {
+	confPath, err := filepath.EvalSymlinks(Context.confFilePath)
 	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			log.Error("unexpected error while config file path evaluation: %s", err)
+		confPath = Context.confFilePath
+		logFunc := log.Error
+		if errors.Is(err, os.ErrNotExist) {
+			logFunc = log.Debug
 		}
-		configFile = Context.configFilename
+
+		logFunc("evaluating config path: %s; using %q", err, confPath)
 	}
-	if !filepath.IsAbs(configFile) {
-		configFile = filepath.Join(Context.workDir, configFile)
+
+	if !filepath.IsAbs(confPath) {
+		confPath = filepath.Join(Context.workDir, confPath)
 	}
-	return configFile
+
+	return confPath
 }
 
-// getLogSettings reads logging settings from the config file.
-// we do it in a separate method in order to configure logger before the actual configuration is parsed and applied.
-func getLogSettings() logSettings {
-	l := logSettings{}
-	yamlFile, err := readConfigFile()
-	if err != nil {
-		return l
+// validateBindHosts returns error if any of binding hosts from configuration is
+// not a valid IP address.
+func validateBindHosts(conf *configuration) (err error) {
+	if !conf.HTTPConfig.Address.IsValid() {
+		return errors.Error("http.address is not a valid ip address")
 	}
-	err = yaml.Unmarshal(yamlFile, &l)
-	if err != nil {
-		log.Error("Couldn't get logging settings from the configuration: %s", err)
+
+	for i, addr := range conf.DNS.BindHosts {
+		if !addr.IsValid() {
+			return fmt.Errorf("dns.bind_hosts at index %d is not a valid ip address", i)
+		}
 	}
-	return l
+
+	return nil
 }
 
-// parseConfig loads configuration from the YAML file
+// parseConfig loads configuration from the YAML file, upgrading it if
+// necessary.
 func parseConfig() (err error) {
-	var fileData []byte
-	fileData, err = readConfigFile()
+	// Do the upgrade if necessary.
+	config.fileData, err = readConfigFile()
 	if err != nil {
 		return err
 	}
 
-	config.fileData = nil
-	err = yaml.Unmarshal(fileData, &config)
+	migrator := configmigrate.New(&configmigrate.Config{
+		WorkingDir: Context.workDir,
+	})
+
+	var upgraded bool
+	config.fileData, upgraded, err = migrator.Migrate(
+		config.fileData,
+		configmigrate.LastSchemaVersion,
+	)
 	if err != nil {
+		// Don't wrap the error, because it's informative enough as is.
+		return err
+	} else if upgraded {
+		confPath := configFilePath()
+		log.Debug("writing config file %q after config upgrade", confPath)
+
+		err = maybe.WriteFile(confPath, config.fileData, 0o644)
+		if err != nil {
+			return fmt.Errorf("writing new config: %w", err)
+		}
+	}
+
+	err = yaml.Unmarshal(config.fileData, &config)
+	if err != nil {
+		// Don't wrap the error since it's informative enough as is.
+		return err
+	}
+
+	err = validateConfig()
+	if err != nil {
+		return err
+	}
+
+	if config.DNS.UpstreamTimeout.Duration == 0 {
+		config.DNS.UpstreamTimeout = timeutil.Duration{Duration: dnsforward.DefaultTimeout}
+	}
+
+	// Do not wrap the error because it's informative enough as is.
+	return setContextTLSCipherIDs()
+}
+
+// validateConfig returns error if the configuration is invalid.
+func validateConfig() (err error) {
+	err = validateBindHosts(config)
+	if err != nil {
+		// Don't wrap the error since it's informative enough as is.
 		return err
 	}
 
 	tcpPorts := aghalg.UniqChecker[tcpPort]{}
-	addPorts(tcpPorts, tcpPort(config.BindPort))
+	addPorts(tcpPorts, tcpPort(config.HTTPConfig.Address.Port()))
 
 	udpPorts := aghalg.UniqChecker[udpPort]{}
 	addPorts(udpPorts, udpPort(config.DNS.Port))
@@ -425,27 +585,18 @@ func parseConfig() (err error) {
 		return fmt.Errorf("validating udp ports: %w", err)
 	}
 
-	if !filtering.ValidateUpdateIvl(config.DNS.DnsfilterConf.FiltersUpdateIntervalHours) {
-		config.DNS.DnsfilterConf.FiltersUpdateIntervalHours = 24
-	}
-
-	if config.DNS.UpstreamTimeout.Duration == 0 {
-		config.DNS.UpstreamTimeout = timeutil.Duration{Duration: dnsforward.DefaultTimeout}
-	}
-
-	err = setContextTLSCipherIDs()
-	if err != nil {
-		return err
+	if !filtering.ValidateUpdateIvl(config.Filtering.FiltersUpdateIntervalHours) {
+		config.Filtering.FiltersUpdateIntervalHours = 24
 	}
 
 	return nil
 }
 
 // udpPort is the port number for UDP protocol.
-type udpPort int
+type udpPort uint16
 
 // tcpPort is the port number for TCP protocol.
-type tcpPort int
+type tcpPort uint16
 
 // addPorts is a helper for ports validation that skips zero ports.
 func addPorts[T tcpPort | udpPort](uc aghalg.UniqChecker[T], ports ...T) {
@@ -462,11 +613,11 @@ func readConfigFile() (fileData []byte, err error) {
 		return config.fileData, nil
 	}
 
-	name := config.getConfigFilename()
-	log.Debug("reading config file: %s", name)
+	confPath := configFilePath()
+	log.Debug("reading config file %q", confPath)
 
 	// Do not wrap the error because it's informative enough as is.
-	return os.ReadFile(name)
+	return os.ReadFile(confPath)
 }
 
 // Saves configuration to the YAML file and also saves the user filter contents to a file
@@ -475,7 +626,7 @@ func (c *configuration) write() (err error) {
 	defer c.Unlock()
 
 	if Context.auth != nil {
-		config.Users = Context.auth.GetUsers()
+		config.Users = Context.auth.usersList()
 	}
 
 	if Context.tls != nil {
@@ -487,10 +638,9 @@ func (c *configuration) write() (err error) {
 	if Context.stats != nil {
 		statsConf := stats.Config{}
 		Context.stats.WriteDiskConfig(&statsConf)
-		config.Stats.Interval = statsConf.LimitDays
+		config.Stats.Interval = timeutil.Duration{Duration: statsConf.Limit}
 		config.Stats.Enabled = statsConf.Enabled
 		config.Stats.Ignored = statsConf.Ignored.Values()
-		sort.Strings(config.Stats.Ignored)
 	}
 
 	if Context.queryLog != nil {
@@ -502,22 +652,27 @@ func (c *configuration) write() (err error) {
 		config.QueryLog.Interval = timeutil.Duration{Duration: dc.RotationIvl}
 		config.QueryLog.MemSize = dc.MemSize
 		config.QueryLog.Ignored = dc.Ignored.Values()
-		sort.Strings(config.QueryLog.Ignored)
 	}
 
 	if Context.filters != nil {
-		Context.filters.WriteDiskConfig(config.DNS.DnsfilterConf)
-		config.Filters = config.DNS.DnsfilterConf.Filters
-		config.WhitelistFilters = config.DNS.DnsfilterConf.WhitelistFilters
-		config.UserRules = config.DNS.DnsfilterConf.UserRules
+		Context.filters.WriteDiskConfig(config.Filtering)
+		config.Filters = config.Filtering.Filters
+		config.WhitelistFilters = config.Filtering.WhitelistFilters
+		config.UserRules = config.Filtering.UserRules
 	}
 
 	if s := Context.dnsServer; s != nil {
-		c := dnsforward.FilteringConfig{}
+		c := dnsforward.Config{}
 		s.WriteDiskConfig(&c)
 		dns := &config.DNS
-		dns.FilteringConfig = c
-		dns.LocalPTRResolvers, config.Clients.Sources.RDNS, dns.UsePrivateRDNS = s.RDNSSettings()
+		dns.Config = c
+
+		dns.PrivateRDNSResolvers = s.LocalPTRResolvers()
+
+		addrProcConf := s.AddrProcConfig()
+		config.Clients.Sources.RDNS = addrProcConf.UseRDNS
+		config.Clients.Sources.WHOIS = addrProcConf.UseWHOIS
+		dns.UsePrivateRDNS = addrProcConf.UsePrivateRDNS
 	}
 
 	if Context.dhcpServer != nil {
@@ -526,8 +681,8 @@ func (c *configuration) write() (err error) {
 
 	config.Clients.Persistent = Context.clients.forConfig()
 
-	configFile := config.getConfigFilename()
-	log.Debug("writing config file %q", configFile)
+	confPath := configFilePath()
+	log.Debug("writing config file %q", confPath)
 
 	buf := &bytes.Buffer{}
 	enc := yaml.NewEncoder(buf)
@@ -538,7 +693,7 @@ func (c *configuration) write() (err error) {
 		return fmt.Errorf("generating config file: %w", err)
 	}
 
-	err = maybe.WriteFile(configFile, buf.Bytes(), 0o644)
+	err = maybe.WriteFile(confPath, buf.Bytes(), 0o644)
 	if err != nil {
 		return fmt.Errorf("writing config file: %w", err)
 	}

@@ -64,11 +64,11 @@ export default {
             "homepage": "https://github.com/MasterKia/PersianBlocker",
             "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_19.txt"
         },
-        "ITA_filtri_dns": {
-            "name": "ITA: Filtri-DNS",
+        "ISR_easyList_hebrew": {
+            "name": "ISR: EasyList Hebrew",
             "categoryId": "regional",
-            "homepage": "https://filtri-dns.ga/",
-            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_18.txt"
+            "homepage": "https://github.com/easylist/EasyListHebrew",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_43.txt"
         },
         "KOR_list_kr": {
             "name": "KOR: List-KR DNS",
@@ -100,8 +100,14 @@ export default {
             "homepage": "https://github.com/DandelionSprout/adfilt",
             "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_13.txt"
         },
+        "POL_cert_polska_list_of_malicious_domains": {
+            "name": "POL: CERT Polska List of malicious domains",
+            "categoryId": "regional",
+            "homepage": "https://cert.pl/posts/2020/03/ostrzezenia_phishing/",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_41.txt"
+        },
         "POL_polish_filters_for_pi_hole": {
-            "name": "POL: Polish filters for Pi hole",
+            "name": "POL: Polish filters for Pi-hole",
             "categoryId": "regional",
             "homepage": "https://www.certyficate.it/",
             "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_14.txt"
@@ -118,6 +124,12 @@ export default {
             "homepage": "https://github.com/bkrucarci/turk-adlist",
             "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_26.txt"
         },
+        "TUR_turkish_ad_hosts": {
+            "name": "TUR: Turkish Ad Hosts",
+            "categoryId": "regional",
+            "homepage": "https://github.com/symbuzzer/Turkish-Ad-Hosts",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_40.txt"
+        },
         "VNM_abpvn": {
             "name": "VNM: ABPVN List",
             "categoryId": "regional",
@@ -130,11 +142,17 @@ export default {
             "homepage": "https://github.com/AdguardTeam/AdGuardSDNSFilter",
             "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt"
         },
-        "adway_default_blocklist": {
-            "name": "AdAway Default Blocklist",
+        "adguard_popup_filter": {
+            "name": "AdGuard DNS Popup Hosts filter",
             "categoryId": "general",
-            "homepage": "https://github.com/AdAway/adaway.github.io/",
-            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_2.txt"
+            "homepage": "https://github.com/AdguardTeam/AdGuardSDNSFilter",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_59.txt"
+        },
+        "awavenue_ads_rule": {
+            "name": "AWAvenue Ads Rule",
+            "categoryId": "general",
+            "homepage": "https://awavenue.top/",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_53.txt"
         },
         "curben_phishing_filter": {
             "name": "Phishing URL Blocklist (PhishTank and OpenPhish)",
@@ -154,17 +172,89 @@ export default {
             "homepage": "https://github.com/DandelionSprout/adfilt",
             "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_12.txt"
         },
+        "dandelion_sprouts_anti_push_notifications": {
+            "name": "Dandelion Sprout's Anti Push Notifications",
+            "categoryId": "other",
+            "homepage": "https://github.com/DandelionSprout/adfilt",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_39.txt"
+        },
         "dandelion_sprouts_game_console_adblock_list": {
             "name": "Dandelion Sprout's Game Console Adblock List",
             "categoryId": "other",
             "homepage": "https://github.com/DandelionSprout/adfilt",
             "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_6.txt"
         },
-        "hagezi_personal": {
-            "name": "HaGeZi Personal Black \u0026 White",
+        "hagezi_allowlist_referral": {
+            "name": "HaGeZi's Allowlist Referral",
+            "categoryId": "other",
+            "homepage": "https://github.com/hagezi/dns-blocklists#referral",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_45.txt"
+        },
+        "hagezi_antipiracy_blocklist": {
+            "name": "HaGeZi's Anti-Piracy Blocklist",
+            "categoryId": "other",
+            "homepage": "https://github.com/hagezi/dns-blocklists#piracy",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_46.txt"
+        },
+        "hagezi_badware_hoster_blocklist": {
+            "name": "HaGeZi's Badware Hoster Blocklist",
+            "categoryId": "security",
+            "homepage": "https://github.com/hagezi/dns-blocklists",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_55.txt"
+        },
+        "hagezi_dyndns_blocklist": {
+            "name": "HaGeZi's DynDNS Blocklist",
+            "categoryId": "security",
+            "homepage": "https://github.com/hagezi/dns-blocklists",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_54.txt"
+        },
+        "hagezi_encrypted_dns_vpn_tor_proxy_bypass": {
+            "name": "HaGeZi's Encrypted DNS/VPN/TOR/Proxy Bypass",
+            "categoryId": "security",
+            "homepage": "https://github.com/hagezi/dns-blocklists#bypass",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_52.txt"
+        },
+        "hagezi_gambling_blocklist": {
+            "name": "HaGeZi's Gambling Blocklist",
+            "categoryId": "other",
+            "homepage": "https://github.com/hagezi/dns-blocklists#gambling",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_47.txt"
+        },
+        "hagezi_multinormal": {
+            "name": "HaGeZi's Normal Blocklist",
             "categoryId": "general",
             "homepage": "https://github.com/hagezi/dns-blocklists",
             "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_34.txt"
+        },
+        "hagezi_pro": {
+            "name": "HaGeZi's Pro Blocklist",
+            "categoryId": "general",
+            "homepage": "https://github.com/hagezi/dns-blocklists",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_48.txt"
+        },
+        "hagezi_pro++": {
+            "name": "HaGeZi's Pro++ Blocklist",
+            "categoryId": "general",
+            "homepage": "https://github.com/hagezi/dns-blocklists",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_51.txt"
+        },
+        "hagezi_the_worlds_most_abused_tlds": {
+            "name": "HaGeZi's The World's Most Abused TLDs",
+            "categoryId": "security",
+            "homepage": "https://github.com/hagezi/dns-blocklists",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_56.txt"
+        },
+        "hagezi_threat_intelligence_feeds": {
+            "name": "HaGeZi's Threat Intelligence Feeds",
+            "categoryId": "security",
+            "homepage": "https://github.com/hagezi/dns-blocklists",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_44.txt"
+        },
+        "hagezi_ultimate": {
+            "name": "HaGeZi's Ultimate Blocklist",
+            "categoryId": "general",
+            "homepage": "https://github.com/hagezi/dns-blocklists",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_49.txt"
         },
         "no_google": {
             "name": "No Google",
@@ -178,20 +268,14 @@ export default {
             "homepage": "https://github.com/hoshsadiq/adblock-nocoin-list/",
             "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_8.txt"
         },
-        "notracking_hosts_blocklists": {
-            "name": "The NoTracking blocklist",
-            "categoryId": "general",
-            "homepage": "https://github.com/notracking/hosts-blocklists",
-            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_32.txt"
-        },
         "oisd_basic": {
-            "name": "OISD Blocklist Basic",
+            "name": "OISD Blocklist Small",
             "categoryId": "general",
             "homepage": "https://oisd.nl/",
             "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_5.txt"
         },
         "oisd_full": {
-            "name": "OISD Blocklist Full",
+            "name": "OISD Blocklist Big",
             "categoryId": "general",
             "homepage": "https://oisd.nl/",
             "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_27.txt"
@@ -208,11 +292,29 @@ export default {
             "homepage": "https://pgl.yoyo.org/adservers/",
             "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_3.txt"
         },
+        "phishing_army": {
+            "name": "Phishing Army",
+            "categoryId": "security",
+            "homepage": "https://gitlab.com/malware-filter/phishing-filter",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_18.txt"
+        },
         "scam_blocklist_by_durablenapkin": {
             "name": "Scam Blocklist by DurableNapkin",
             "categoryId": "security",
             "homepage": "https://github.com/durablenapkin/scamblocklist",
             "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_10.txt"
+        },
+        "shadowwhisperers_dating_list": {
+            "name": "ShadowWhisperer's Dating List",
+            "categoryId": "other",
+            "homepage": "https://github.com/ShadowWhisperer/BlockLists",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_57.txt"
+        },
+        "shadowwhisperers_malware_list": {
+            "name": "ShadowWhisperer's Malware List",
+            "categoryId": "security",
+            "homepage": "https://github.com/ShadowWhisperer/BlockLists",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_42.txt"
         },
         "staklerware_indicators_list": {
             "name": "Stalkerware Indicators List",
@@ -232,10 +334,16 @@ export default {
             "homepage": "https://github.com/mitchellkrogza/The-Big-List-of-Hacked-Malware-Web-Sites",
             "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_9.txt"
         },
+        "ublock_badware_risks": {
+            "name": "uBlock₀ filters – Badware risks",
+            "categoryId": "security",
+            "homepage": "https://github.com/uBlockOrigin/uAssets",
+            "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_50.txt"
+        },
         "urlhaus_filter_online": {
             "name": "Malicious URL Blocklist (URLHaus)",
             "categoryId": "security",
-            "homepage": "https://gitlab.com/malware-filter/urlhaus-filter",
+            "homepage": "https://urlhaus.abuse.ch/",
             "source": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_11.txt"
         },
         "windowsspyblocker_hosts_spy_rules": {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/AdguardTeam/AdGuardHome/internal/aghhttp"
 	"github.com/AdguardTeam/AdGuardHome/internal/aghnet"
+	"github.com/AdguardTeam/AdGuardHome/internal/dhcpsvc"
 	"github.com/AdguardTeam/golibs/errors"
 )
 
@@ -23,30 +24,54 @@ type ServerConfig struct {
 	Enabled       bool   `yaml:"enabled"`
 	InterfaceName string `yaml:"interface_name"`
 
-	// LocalDomainName is the domain name used for DHCP hosts.  For example,
-	// a DHCP client with the hostname "myhost" can be addressed as "myhost.lan"
+	// LocalDomainName is the domain name used for DHCP hosts.  For example, a
+	// DHCP client with the hostname "myhost" can be addressed as "myhost.lan"
 	// when LocalDomainName is "lan".
+	//
+	// TODO(e.burkov):  Probably, remove this field.  See the TODO on
+	// [Interface.Enabled].
 	LocalDomainName string `yaml:"local_domain_name"`
 
 	Conf4 V4ServerConf `yaml:"dhcpv4"`
 	Conf6 V6ServerConf `yaml:"dhcpv6"`
 
-	WorkDir    string `yaml:"-"`
-	DBFilePath string `yaml:"-"`
+	// WorkDir is used to store DHCP leases.
+	//
+	// Deprecated:  Remove it when migration of DHCP leases will not be needed.
+	WorkDir string `yaml:"-"`
+
+	// DataDir is used to store DHCP leases.
+	DataDir string `yaml:"-"`
+
+	// dbFilePath is the path to the file with stored DHCP leases.
+	dbFilePath string `yaml:"-"`
 }
 
 // DHCPServer - DHCP server interface
 type DHCPServer interface {
 	// ResetLeases resets leases.
-	ResetLeases(leases []*Lease) (err error)
+	ResetLeases(leases []*dhcpsvc.Lease) (err error)
 	// GetLeases returns deep clones of the current leases.
-	GetLeases(flags GetLeasesFlags) (leases []*Lease)
+	GetLeases(flags GetLeasesFlags) (leases []*dhcpsvc.Lease)
 	// AddStaticLease - add a static lease
-	AddStaticLease(l *Lease) (err error)
+	AddStaticLease(l *dhcpsvc.Lease) (err error)
 	// RemoveStaticLease - remove a static lease
-	RemoveStaticLease(l *Lease) (err error)
-	// FindMACbyIP - find a MAC address by IP address in the currently active DHCP leases
-	FindMACbyIP(ip net.IP) net.HardwareAddr
+	RemoveStaticLease(l *dhcpsvc.Lease) (err error)
+
+	// UpdateStaticLease updates IP, hostname of the lease.
+	UpdateStaticLease(l *dhcpsvc.Lease) (err error)
+
+	// FindMACbyIP returns a MAC address by the IP address of its lease, if
+	// there is one.
+	FindMACbyIP(ip netip.Addr) (mac net.HardwareAddr)
+
+	// HostByIP returns a hostname by the IP address of its lease, if there is
+	// one.
+	HostByIP(ip netip.Addr) (host string)
+
+	// IPByHost returns an IP address by the hostname of its lease, if there is
+	// one.
+	IPByHost(host string) (ip netip.Addr)
 
 	// WriteDiskConfig4 - copy disk configuration
 	WriteDiskConfig4(c *V4ServerConf)
@@ -57,7 +82,7 @@ type DHCPServer interface {
 	Start() (err error)
 	// Stop - stop server
 	Stop() (err error)
-	getLeasesRef() []*Lease
+	getLeasesRef() []*dhcpsvc.Lease
 }
 
 // V4ServerConf - server configuration

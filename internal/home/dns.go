@@ -7,32 +7,30 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
+	"time"
 
 	"github.com/AdguardTeam/AdGuardHome/internal/aghalg"
 	"github.com/AdguardTeam/AdGuardHome/internal/aghhttp"
 	"github.com/AdguardTeam/AdGuardHome/internal/aghnet"
-	"github.com/AdguardTeam/AdGuardHome/internal/dhcpd"
+	"github.com/AdguardTeam/AdGuardHome/internal/client"
 	"github.com/AdguardTeam/AdGuardHome/internal/dnsforward"
 	"github.com/AdguardTeam/AdGuardHome/internal/filtering"
 	"github.com/AdguardTeam/AdGuardHome/internal/querylog"
 	"github.com/AdguardTeam/AdGuardHome/internal/stats"
-	"github.com/AdguardTeam/dnsproxy/proxy"
 	"github.com/AdguardTeam/golibs/errors"
 	"github.com/AdguardTeam/golibs/log"
 	"github.com/AdguardTeam/golibs/netutil"
-	"github.com/AdguardTeam/golibs/stringutil"
 	"github.com/ameshkov/dnscrypt/v2"
 	yaml "gopkg.in/yaml.v3"
 )
 
-// Default ports.
+// Default listening ports.
 const (
-	defaultPortDNS   = 53
-	defaultPortHTTP  = 80
-	defaultPortHTTPS = 443
-	defaultPortQUIC  = 853
-	defaultPortTLS   = 853
+	defaultPortDNS   uint16 = 53
+	defaultPortHTTP  uint16 = 80
+	defaultPortHTTPS uint16 = 443
+	defaultPortQUIC  uint16 = 853
+	defaultPortTLS   uint16 = 853
 )
 
 // Called by other modules when configuration is changed
@@ -47,24 +45,28 @@ func onConfigModified() {
 // server and initializes it at last.  It also must not be called unless
 // [config] and [Context] are initialized.
 func initDNS() (err error) {
-	baseDir := Context.getDataDir()
-
 	anonymizer := config.anonymizer()
 
-	statsConf := stats.Config{
-		Filename:       filepath.Join(baseDir, "stats.db"),
-		LimitDays:      config.Stats.Interval,
-		ConfigModified: onConfigModified,
-		HTTPRegister:   httpRegister,
-		Enabled:        config.Stats.Enabled,
+	statsDir, querylogDir, err := checkStatsAndQuerylogDirs(&Context, config)
+	if err != nil {
+		return err
 	}
 
-	set, err := nonDupEmptyHostNames(config.Stats.Ignored)
+	statsConf := stats.Config{
+		Filename:          filepath.Join(statsDir, "stats.db"),
+		Limit:             config.Stats.Interval.Duration,
+		ConfigModified:    onConfigModified,
+		HTTPRegister:      httpRegister,
+		Enabled:           config.Stats.Enabled,
+		ShouldCountClient: Context.clients.shouldCountClient,
+	}
+
+	engine, err := aghnet.NewIgnoreEngine(config.Stats.Ignored)
 	if err != nil {
 		return fmt.Errorf("statistics: ignored list: %w", err)
 	}
 
-	statsConf.Ignored = set
+	statsConf.Ignored = engine
 	Context.stats, err = stats.New(statsConf)
 	if err != nil {
 		return fmt.Errorf("init stats: %w", err)
@@ -75,7 +77,7 @@ func initDNS() (err error) {
 		ConfigModified:    onConfigModified,
 		HTTPRegister:      httpRegister,
 		FindClient:        Context.clients.findMultiple,
-		BaseDir:           baseDir,
+		BaseDir:           querylogDir,
 		AnonymizeClientIP: config.DNS.AnonymizeClientIP,
 		RotationIvl:       config.QueryLog.Interval.Duration,
 		MemSize:           config.QueryLog.MemSize,
@@ -83,15 +85,18 @@ func initDNS() (err error) {
 		FileEnabled:       config.QueryLog.FileEnabled,
 	}
 
-	set, err = nonDupEmptyHostNames(config.QueryLog.Ignored)
+	engine, err = aghnet.NewIgnoreEngine(config.QueryLog.Ignored)
 	if err != nil {
 		return fmt.Errorf("querylog: ignored list: %w", err)
 	}
 
-	conf.Ignored = set
-	Context.queryLog = querylog.New(conf)
+	conf.Ignored = engine
+	Context.queryLog, err = querylog.New(conf)
+	if err != nil {
+		return fmt.Errorf("init querylog: %w", err)
+	}
 
-	Context.filters, err = filtering.New(config.DNS.DnsfilterConf, nil)
+	Context.filters, err = filtering.New(config.Filtering, nil)
 	if err != nil {
 		// Don't wrap the error, since it's informative enough as is.
 		return err
@@ -119,55 +124,49 @@ func initDNSServer(
 	filters *filtering.DNSFilter,
 	sts stats.Interface,
 	qlog querylog.QueryLog,
-	dhcpSrv dhcpd.Interface,
+	dhcpSrv dnsforward.DHCP,
 	anonymizer *aghnet.IPMut,
 	httpReg aghhttp.RegisterFunc,
 	tlsConf *tlsConfigSettings,
 ) (err error) {
-	privateNets, err := parseSubnetSet(config.DNS.PrivateNets)
-	if err != nil {
-		return fmt.Errorf("preparing set of private subnets: %w", err)
-	}
-
-	p := dnsforward.DNSCreateParams{
+	Context.dnsServer, err = dnsforward.NewServer(dnsforward.DNSCreateParams{
 		DNSFilter:   filters,
 		Stats:       sts,
 		QueryLog:    qlog,
-		PrivateNets: privateNets,
+		PrivateNets: parseSubnetSet(config.DNS.PrivateNets),
 		Anonymizer:  anonymizer,
-		LocalDomain: config.DHCP.LocalDomainName,
 		DHCPServer:  dhcpSrv,
-	}
-
-	Context.dnsServer, err = dnsforward.NewServer(p)
+		EtcHosts:    Context.etcHosts,
+		LocalDomain: config.DHCP.LocalDomainName,
+	})
+	defer func() {
+		if err != nil {
+			closeDNSServer()
+		}
+	}()
 	if err != nil {
-		closeDNSServer()
-
 		return fmt.Errorf("dnsforward.NewServer: %w", err)
 	}
 
-	Context.clients.dnsServer = Context.dnsServer
+	Context.clients.clientChecker = Context.dnsServer
 
-	dnsConf, err := generateServerConfig(tlsConf, httpReg)
+	dnsConf, err := newServerConfig(&config.DNS, config.Clients.Sources, tlsConf, httpReg)
 	if err != nil {
-		closeDNSServer()
-
-		return fmt.Errorf("generateServerConfig: %w", err)
+		return fmt.Errorf("newServerConfig: %w", err)
 	}
 
-	err = Context.dnsServer.Prepare(&dnsConf)
-	if err != nil {
-		closeDNSServer()
+	// Try to prepare the server with disabled private RDNS resolution if it
+	// failed to prepare as is.  See TODO on [dnsforward.PrivateRDNSError].
+	err = Context.dnsServer.Prepare(dnsConf)
+	if privRDNSErr := (&dnsforward.PrivateRDNSError{}); errors.As(err, &privRDNSErr) {
+		log.Info("WARNING: %s; trying to disable private RDNS resolution", err)
 
+		dnsConf.UsePrivateRDNS = false
+		err = Context.dnsServer.Prepare(dnsConf)
+	}
+
+	if err != nil {
 		return fmt.Errorf("dnsServer.Prepare: %w", err)
-	}
-
-	if config.Clients.Sources.RDNS {
-		Context.rdns = NewRDNS(Context.dnsServer, &Context.clients, config.DNS.UsePrivateRDNS)
-	}
-
-	if config.Clients.Sources.WHOIS {
-		Context.whois = initWHOIS(&Context.clients)
 	}
 
 	return nil
@@ -176,26 +175,15 @@ func initDNSServer(
 // parseSubnetSet parses a slice of subnets.  If the slice is empty, it returns
 // a subnet set that matches all locally served networks, see
 // [netutil.IsLocallyServed].
-func parseSubnetSet(nets []string) (s netutil.SubnetSet, err error) {
+func parseSubnetSet(nets []netutil.Prefix) (s netutil.SubnetSet) {
 	switch len(nets) {
 	case 0:
 		// Use an optimized function-based matcher.
-		return netutil.SubnetSetFunc(netutil.IsLocallyServed), nil
+		return netutil.SubnetSetFunc(netutil.IsLocallyServed)
 	case 1:
-		s, err = netutil.ParseSubnet(nets[0])
-		if err != nil {
-			return nil, err
-		}
-
-		return s, nil
+		return nets[0].Prefix
 	default:
-		var nets []*net.IPNet
-		nets, err = netutil.ParseSubnets(config.DNS.PrivateNets...)
-		if err != nil {
-			return nil, err
-		}
-
-		return netutil.SliceSubnetSet(nets), nil
+		return netutil.SliceSubnetSet(netutil.UnembedPrefixes(nets))
 	}
 }
 
@@ -203,136 +191,155 @@ func isRunning() bool {
 	return Context.dnsServer != nil && Context.dnsServer.IsRunning()
 }
 
-func onDNSRequest(pctx *proxy.DNSContext) {
-	ip := netutil.NetAddrToAddrPort(pctx.Addr).Addr()
-	if ip == (netip.Addr{}) {
-		// This would be quite weird if we get here.
-		return
-	}
-
-	srcs := config.Clients.Sources
-	if srcs.RDNS && !ip.IsLoopback() {
-		Context.rdns.Begin(ip)
-	}
-
-	if srcs.WHOIS && !netutil.IsSpecialPurposeAddr(ip) {
-		Context.whois.Begin(ip)
-	}
-}
-
-func ipsToTCPAddrs(ips []netip.Addr, port int) (tcpAddrs []*net.TCPAddr) {
+func ipsToTCPAddrs(ips []netip.Addr, port uint16) (tcpAddrs []*net.TCPAddr) {
 	if ips == nil {
 		return nil
 	}
 
 	tcpAddrs = make([]*net.TCPAddr, 0, len(ips))
 	for _, ip := range ips {
-		tcpAddrs = append(tcpAddrs, net.TCPAddrFromAddrPort(netip.AddrPortFrom(ip, uint16(port))))
+		tcpAddrs = append(tcpAddrs, net.TCPAddrFromAddrPort(netip.AddrPortFrom(ip, port)))
 	}
 
 	return tcpAddrs
 }
 
-func ipsToUDPAddrs(ips []netip.Addr, port int) (udpAddrs []*net.UDPAddr) {
+func ipsToUDPAddrs(ips []netip.Addr, port uint16) (udpAddrs []*net.UDPAddr) {
 	if ips == nil {
 		return nil
 	}
 
 	udpAddrs = make([]*net.UDPAddr, 0, len(ips))
 	for _, ip := range ips {
-		udpAddrs = append(udpAddrs, net.UDPAddrFromAddrPort(netip.AddrPortFrom(ip, uint16(port))))
+		udpAddrs = append(udpAddrs, net.UDPAddrFromAddrPort(netip.AddrPortFrom(ip, port)))
 	}
 
 	return udpAddrs
 }
 
-func generateServerConfig(
+// newServerConfig converts values from the configuration file into the internal
+// DNS server configuration.  All arguments must not be nil.
+func newServerConfig(
+	dnsConf *dnsConfig,
+	clientSrcConf *clientSourcesConfig,
 	tlsConf *tlsConfigSettings,
 	httpReg aghhttp.RegisterFunc,
-) (newConf dnsforward.ServerConfig, err error) {
-	dnsConf := config.DNS
+) (newConf *dnsforward.ServerConfig, err error) {
 	hosts := aghalg.CoalesceSlice(dnsConf.BindHosts, []netip.Addr{netutil.IPv4Localhost()})
-	newConf = dnsforward.ServerConfig{
-		UDPListenAddrs:  ipsToUDPAddrs(hosts, dnsConf.Port),
-		TCPListenAddrs:  ipsToTCPAddrs(hosts, dnsConf.Port),
-		FilteringConfig: dnsConf.FilteringConfig,
-		ConfigModified:  onConfigModified,
-		HTTPRegister:    httpReg,
-		OnDNSRequest:    onDNSRequest,
-		UseDNS64:        config.DNS.UseDNS64,
-		DNS64Prefixes:   config.DNS.DNS64Prefixes,
+
+	fwdConf := dnsConf.Config
+	fwdConf.FilterHandler = applyAdditionalFiltering
+	fwdConf.ClientsContainer = &Context.clients
+
+	newConf = &dnsforward.ServerConfig{
+		UDPListenAddrs:         ipsToUDPAddrs(hosts, dnsConf.Port),
+		TCPListenAddrs:         ipsToTCPAddrs(hosts, dnsConf.Port),
+		Config:                 fwdConf,
+		TLSConfig:              newDNSTLSConfig(tlsConf, hosts),
+		TLSAllowUnencryptedDoH: tlsConf.AllowUnencryptedDoH,
+		UpstreamTimeout:        dnsConf.UpstreamTimeout.Duration,
+		TLSv12Roots:            Context.tlsRoots,
+		ConfigModified:         onConfigModified,
+		HTTPRegister:           httpReg,
+		LocalPTRResolvers:      dnsConf.PrivateRDNSResolvers,
+		UseDNS64:               dnsConf.UseDNS64,
+		DNS64Prefixes:          dnsConf.DNS64Prefixes,
+		UsePrivateRDNS:         dnsConf.UsePrivateRDNS,
+		ServeHTTP3:             dnsConf.ServeHTTP3,
+		UseHTTP3Upstreams:      dnsConf.UseHTTP3Upstreams,
+		ServePlainDNS:          dnsConf.ServePlainDNS,
 	}
 
-	if tlsConf.Enabled {
-		newConf.TLSConfig = tlsConf.TLSConfig
-		newConf.TLSConfig.ServerName = tlsConf.ServerName
-
-		if tlsConf.PortHTTPS != 0 {
-			newConf.HTTPSListenAddrs = ipsToTCPAddrs(hosts, tlsConf.PortHTTPS)
-		}
-
-		if tlsConf.PortDNSOverTLS != 0 {
-			newConf.TLSListenAddrs = ipsToTCPAddrs(hosts, tlsConf.PortDNSOverTLS)
-		}
-
-		if tlsConf.PortDNSOverQUIC != 0 {
-			newConf.QUICListenAddrs = ipsToUDPAddrs(hosts, tlsConf.PortDNSOverQUIC)
-		}
-
-		if tlsConf.PortDNSCrypt != 0 {
-			newConf.DNSCryptConfig, err = newDNSCrypt(hosts, *tlsConf)
-			if err != nil {
-				// Don't wrap the error, because it's already
-				// wrapped by newDNSCrypt.
-				return dnsforward.ServerConfig{}, err
-			}
-		}
+	var initialAddresses []netip.Addr
+	// Context.stats may be nil here if initDNSServer is called from
+	// [cmdlineUpdate].
+	if sts := Context.stats; sts != nil {
+		const initialClientsNum = 100
+		initialAddresses = Context.stats.TopClientsIP(initialClientsNum)
 	}
 
-	newConf.TLSv12Roots = Context.tlsRoots
-	newConf.TLSAllowUnencryptedDoH = tlsConf.AllowUnencryptedDoH
+	// Do not set DialContext, PrivateSubnets, and UsePrivateRDNS, because they
+	// are set by [dnsforward.Server.Prepare].
+	newConf.AddrProcConf = &client.DefaultAddrProcConfig{
+		Exchanger:        Context.dnsServer,
+		AddressUpdater:   &Context.clients,
+		InitialAddresses: initialAddresses,
+		CatchPanics:      true,
+		UseRDNS:          clientSrcConf.RDNS,
+		UseWHOIS:         clientSrcConf.WHOIS,
+	}
 
-	newConf.FilterHandler = applyAdditionalFiltering
-	newConf.GetCustomUpstreamByClient = Context.clients.findUpstreams
-
-	newConf.LocalPTRResolvers = dnsConf.LocalPTRResolvers
-	newConf.UpstreamTimeout = dnsConf.UpstreamTimeout.Duration
-
-	newConf.ResolveClients = config.Clients.Sources.RDNS
-	newConf.UsePrivateRDNS = dnsConf.UsePrivateRDNS
-	newConf.ServeHTTP3 = dnsConf.ServeHTTP3
-	newConf.UseHTTP3Upstreams = dnsConf.UseHTTP3Upstreams
+	newConf.DNSCryptConfig, err = newDNSCryptConfig(tlsConf, hosts)
+	if err != nil {
+		// Don't wrap the error, because it's already wrapped by
+		// newDNSCryptConfig.
+		return nil, err
+	}
 
 	return newConf, nil
 }
 
-func newDNSCrypt(hosts []netip.Addr, tlsConf tlsConfigSettings) (dnscc dnsforward.DNSCryptConfig, err error) {
-	if tlsConf.DNSCryptConfigFile == "" {
-		return dnscc, errors.Error("no dnscrypt_config_file")
+// newDNSTLSConfig converts values from the configuration file into the internal
+// TLS settings for the DNS server.  tlsConf must not be nil.
+func newDNSTLSConfig(conf *tlsConfigSettings, addrs []netip.Addr) (dnsConf dnsforward.TLSConfig) {
+	if !conf.Enabled {
+		return dnsforward.TLSConfig{}
 	}
 
-	f, err := os.Open(tlsConf.DNSCryptConfigFile)
+	dnsConf = conf.TLSConfig
+	dnsConf.ServerName = conf.ServerName
+
+	if conf.PortHTTPS != 0 {
+		dnsConf.HTTPSListenAddrs = ipsToTCPAddrs(addrs, conf.PortHTTPS)
+	}
+
+	if conf.PortDNSOverTLS != 0 {
+		dnsConf.TLSListenAddrs = ipsToTCPAddrs(addrs, conf.PortDNSOverTLS)
+	}
+
+	if conf.PortDNSOverQUIC != 0 {
+		dnsConf.QUICListenAddrs = ipsToUDPAddrs(addrs, conf.PortDNSOverQUIC)
+	}
+
+	return dnsConf
+}
+
+// newDNSCryptConfig converts values from the configuration file into the
+// internal DNSCrypt settings for the DNS server.  conf must not be nil.
+func newDNSCryptConfig(
+	conf *tlsConfigSettings,
+	addrs []netip.Addr,
+) (dnsCryptConf dnsforward.DNSCryptConfig, err error) {
+	if !conf.Enabled || conf.PortDNSCrypt == 0 {
+		return dnsforward.DNSCryptConfig{}, nil
+	}
+
+	if conf.DNSCryptConfigFile == "" {
+		return dnsforward.DNSCryptConfig{}, errors.Error("no dnscrypt_config_file")
+	}
+
+	f, err := os.Open(conf.DNSCryptConfigFile)
 	if err != nil {
-		return dnscc, fmt.Errorf("opening dnscrypt config: %w", err)
+		return dnsforward.DNSCryptConfig{}, fmt.Errorf("opening dnscrypt config: %w", err)
 	}
 	defer func() { err = errors.WithDeferred(err, f.Close()) }()
 
 	rc := &dnscrypt.ResolverConfig{}
 	err = yaml.NewDecoder(f).Decode(rc)
 	if err != nil {
-		return dnscc, fmt.Errorf("decoding dnscrypt config: %w", err)
+		return dnsforward.DNSCryptConfig{}, fmt.Errorf("decoding dnscrypt config: %w", err)
 	}
 
 	cert, err := rc.CreateCert()
 	if err != nil {
-		return dnscc, fmt.Errorf("creating dnscrypt cert: %w", err)
+		return dnsforward.DNSCryptConfig{}, fmt.Errorf("creating dnscrypt cert: %w", err)
 	}
 
 	return dnsforward.DNSCryptConfig{
 		ResolverCert:   cert,
 		ProviderName:   rc.ProviderName,
-		UDPListenAddrs: ipsToUDPAddrs(hosts, tlsConf.PortDNSCrypt),
-		TCPListenAddrs: ipsToTCPAddrs(hosts, tlsConf.PortDNSCrypt),
+		UDPListenAddrs: ipsToUDPAddrs(addrs, conf.PortDNSCrypt),
+		TCPListenAddrs: ipsToTCPAddrs(addrs, conf.PortDNSCrypt),
 		Enabled:        true,
 	}, nil
 }
@@ -348,34 +355,36 @@ func getDNSEncryption() (de dnsEncryption) {
 
 	Context.tls.WriteDiskConfig(&tlsConf)
 
-	if tlsConf.Enabled && len(tlsConf.ServerName) != 0 {
-		hostname := tlsConf.ServerName
-		if tlsConf.PortHTTPS != 0 {
-			addr := hostname
-			if tlsConf.PortHTTPS != defaultPortHTTPS {
-				addr = netutil.JoinHostPort(addr, tlsConf.PortHTTPS)
-			}
+	if !tlsConf.Enabled || len(tlsConf.ServerName) == 0 {
+		return dnsEncryption{}
+	}
 
-			de.https = (&url.URL{
-				Scheme: "https",
-				Host:   addr,
-				Path:   "/dns-query",
-			}).String()
+	hostname := tlsConf.ServerName
+	if tlsConf.PortHTTPS != 0 {
+		addr := hostname
+		if p := tlsConf.PortHTTPS; p != defaultPortHTTPS {
+			addr = netutil.JoinHostPort(addr, p)
 		}
 
-		if tlsConf.PortDNSOverTLS != 0 {
-			de.tls = (&url.URL{
-				Scheme: "tls",
-				Host:   netutil.JoinHostPort(hostname, tlsConf.PortDNSOverTLS),
-			}).String()
-		}
+		de.https = (&url.URL{
+			Scheme: "https",
+			Host:   addr,
+			Path:   "/dns-query",
+		}).String()
+	}
 
-		if tlsConf.PortDNSOverQUIC != 0 {
-			de.quic = (&url.URL{
-				Scheme: "quic",
-				Host:   netutil.JoinHostPort(hostname, tlsConf.PortDNSOverQUIC),
-			}).String()
-		}
+	if p := tlsConf.PortDNSOverTLS; p != 0 {
+		de.tls = (&url.URL{
+			Scheme: "tls",
+			Host:   netutil.JoinHostPort(hostname, p),
+		}).String()
+	}
+
+	if p := tlsConf.PortDNSOverQUIC; p != 0 {
+		de.quic = (&url.URL{
+			Scheme: "quic",
+			Host:   netutil.JoinHostPort(hostname, p),
+		}).String()
 	}
 
 	return de
@@ -383,23 +392,23 @@ func getDNSEncryption() (de dnsEncryption) {
 
 // applyAdditionalFiltering adds additional client information and settings if
 // the client has them.
-func applyAdditionalFiltering(clientIP net.IP, clientID string, setts *filtering.Settings) {
+func applyAdditionalFiltering(clientIP netip.Addr, clientID string, setts *filtering.Settings) {
 	// pref is a prefix for logging messages around the scope.
 	const pref = "applying filters"
 
-	Context.filters.ApplyBlockedServices(setts, nil)
+	Context.filters.ApplyBlockedServices(setts)
 
 	log.Debug("%s: looking for client with ip %s and clientid %q", pref, clientIP, clientID)
 
-	if clientIP == nil {
+	if !clientIP.IsValid() {
 		return
 	}
 
 	setts.ClientIP = clientIP
 
-	c, ok := Context.clients.Find(clientID)
+	c, ok := Context.clients.find(clientID)
 	if !ok {
-		c, ok = Context.clients.Find(clientIP.String())
+		c, ok = Context.clients.find(clientIP.String())
 		if !ok {
 			log.Debug("%s: no clients with ip %s and clientid %q", pref, clientIP, clientID)
 
@@ -411,12 +420,12 @@ func applyAdditionalFiltering(clientIP net.IP, clientID string, setts *filtering
 
 	if c.UseOwnBlockedServices {
 		// TODO(e.burkov):  Get rid of this crutch.
-		svcs := c.BlockedServices
-		if svcs == nil {
-			svcs = []string{}
+		setts.ServicesRules = nil
+		svcs := c.BlockedServices.IDs
+		if !c.BlockedServices.Schedule.Contains(time.Now()) {
+			Context.filters.ApplyBlockedServicesList(setts, svcs)
+			log.Debug("%s: services for client %q set: %s", pref, c.Name, svcs)
 		}
-		Context.filters.ApplyBlockedServices(setts, svcs)
-		log.Debug("%s: services for client %q set: %s", pref, c.Name, svcs)
 	}
 
 	setts.ClientName = c.Name
@@ -426,7 +435,8 @@ func applyAdditionalFiltering(clientIP net.IP, clientID string, setts *filtering
 	}
 
 	setts.FilteringEnabled = c.FilteringEnabled
-	setts.SafeSearchEnabled = c.SafeSearchEnabled
+	setts.SafeSearchEnabled = c.SafeSearchConf.Enabled
+	setts.ClientSafeSearch = c.SafeSearch
 	setts.SafeBrowsingEnabled = c.SafeBrowsingEnabled
 	setts.ParentalEnabled = c.ParentalEnabled
 }
@@ -452,33 +462,19 @@ func startDNSServer() error {
 	Context.stats.Start()
 	Context.queryLog.Start()
 
-	const topClientsNumber = 100 // the number of clients to get
-	for _, ip := range Context.stats.TopClientsIP(topClientsNumber) {
-		srcs := config.Clients.Sources
-		if srcs.RDNS && !ip.IsLoopback() {
-			Context.rdns.Begin(ip)
-		}
-
-		if srcs.WHOIS && !netutil.IsSpecialPurposeAddr(ip) {
-			Context.whois.Begin(ip)
-		}
-	}
-
 	return nil
 }
 
 func reconfigureDNSServer() (err error) {
-	var newConf dnsforward.ServerConfig
-
 	tlsConf := &tlsConfigSettings{}
 	Context.tls.WriteDiskConfig(tlsConf)
 
-	newConf, err = generateServerConfig(tlsConf, httpRegister)
+	newConf, err := newServerConfig(&config.DNS, config.Clients.Sources, tlsConf, httpRegister)
 	if err != nil {
 		return fmt.Errorf("generating forwarding dns server config: %w", err)
 	}
 
-	err = Context.dnsServer.Reconfigure(&newConf)
+	err = Context.dnsServer.Reconfigure(newConf)
 	if err != nil {
 		return fmt.Errorf("starting forwarding dns server: %w", err)
 	}
@@ -513,46 +509,67 @@ func closeDNSServer() {
 		Context.dnsServer = nil
 	}
 
-	Context.filters.Close()
+	if Context.filters != nil {
+		Context.filters.Close()
+	}
 
 	if Context.stats != nil {
 		err := Context.stats.Close()
 		if err != nil {
 			log.Debug("closing stats: %s", err)
 		}
-
-		// TODO(e.burkov):  Find out if it's safe.
-		Context.stats = nil
 	}
 
 	if Context.queryLog != nil {
 		Context.queryLog.Close()
-		Context.queryLog = nil
 	}
 
 	log.Debug("all dns modules are closed")
 }
 
-// nonDupEmptyHostNames returns nil and error, if list has duplicate or empty
-// host name.  Otherwise returns a set, which contains lowercase host names
-// without dot at the end, and nil error.
-func nonDupEmptyHostNames(list []string) (set *stringutil.Set, err error) {
-	set = stringutil.NewSet()
+// checkStatsAndQuerylogDirs checks and returns directory paths to store
+// statistics and query log.
+func checkStatsAndQuerylogDirs(
+	ctx *homeContext,
+	conf *configuration,
+) (statsDir, querylogDir string, err error) {
+	baseDir := ctx.getDataDir()
 
-	for _, v := range list {
-		host := strings.ToLower(strings.TrimSuffix(v, "."))
-		// TODO(a.garipov): Think about ignoring empty (".") names in
-		// the future.
-		if host == "" {
-			return nil, errors.Error("host name is empty")
+	statsDir = conf.Stats.DirPath
+	if statsDir == "" {
+		statsDir = baseDir
+	} else {
+		err = checkDir(statsDir)
+		if err != nil {
+			return "", "", fmt.Errorf("statistics: custom directory: %w", err)
 		}
-
-		if set.Has(host) {
-			return nil, fmt.Errorf("duplicate host name %q", host)
-		}
-
-		set.Add(host)
 	}
 
-	return set, nil
+	querylogDir = conf.QueryLog.DirPath
+	if querylogDir == "" {
+		querylogDir = baseDir
+	} else {
+		err = checkDir(querylogDir)
+		if err != nil {
+			return "", "", fmt.Errorf("querylog: custom directory: %w", err)
+		}
+	}
+
+	return statsDir, querylogDir, nil
+}
+
+// checkDir checks if the path is a directory.  It's used to check for
+// misconfiguration at startup.
+func checkDir(path string) (err error) {
+	var fi os.FileInfo
+	if fi, err = os.Stat(path); err != nil {
+		// Don't wrap the error, since it's informative enough as is.
+		return err
+	}
+
+	if !fi.IsDir() {
+		return fmt.Errorf("%q is not a directory", path)
+	}
+
+	return nil
 }

@@ -5,7 +5,6 @@ package stats
 import (
 	"fmt"
 	"io"
-	"net"
 	"net/netip"
 	"os"
 	"sync"
@@ -13,9 +12,10 @@ import (
 	"time"
 
 	"github.com/AdguardTeam/AdGuardHome/internal/aghhttp"
+	"github.com/AdguardTeam/AdGuardHome/internal/aghnet"
 	"github.com/AdguardTeam/golibs/errors"
 	"github.com/AdguardTeam/golibs/log"
-	"github.com/AdguardTeam/golibs/stringutil"
+	"github.com/AdguardTeam/golibs/timeutil"
 	"go.etcd.io/bbolt"
 )
 
@@ -25,7 +25,23 @@ func checkInterval(days uint32) (ok bool) {
 	return days == 0 || days == 1 || days == 7 || days == 30 || days == 90
 }
 
+// validateIvl returns an error if ivl is less than an hour or more than a
+// year.
+func validateIvl(ivl time.Duration) (err error) {
+	if ivl < time.Hour {
+		return errors.Error("less than an hour")
+	}
+
+	if ivl > timeutil.Day*365 {
+		return errors.Error("more than a year")
+	}
+
+	return nil
+}
+
 // Config is the configuration structure for the statistics collecting.
+//
+// Do not alter any fields of this structure after using it.
 type Config struct {
 	// UnitID is the function to generate the identifier for current unit.  If
 	// nil, the default function is used, see newUnitID.
@@ -35,22 +51,25 @@ type Config struct {
 	// interface.
 	ConfigModified func()
 
+	// ShouldCountClient returns client's ignore setting.
+	ShouldCountClient func([]string) bool
+
 	// HTTPRegister is the function that registers handlers for the stats
 	// endpoints.
 	HTTPRegister aghhttp.RegisterFunc
 
+	// Ignored contains the list of host names, which should not be counted,
+	// and matches them.
+	Ignored *aghnet.IgnoreEngine
+
 	// Filename is the name of the database file.
 	Filename string
 
-	// LimitDays is the maximum number of days to collect statistics into the
-	// current unit.
-	LimitDays uint32
+	// Limit is an upper limit for collecting statistics.
+	Limit time.Duration
 
 	// Enabled tells if the statistics are enabled.
 	Enabled bool
-
-	// Ignored is the list of host names, which should not be counted.
-	Ignored *stringutil.Set
 }
 
 // Interface is the statistics interface to be used by other packages.
@@ -61,7 +80,7 @@ type Interface interface {
 	io.Closer
 
 	// Update collects the incoming statistics data.
-	Update(e Entry)
+	Update(e *Entry)
 
 	// GetTopClientIP returns at most limit IP addresses corresponding to the
 	// clients with the most number of requests.
@@ -71,7 +90,7 @@ type Interface interface {
 	WriteDiskConfig(dc *Config)
 
 	// ShouldCount returns true if request for the host should be counted.
-	ShouldCount(host string, qType, qClass uint16) bool
+	ShouldCount(host string, qType, qClass uint16, ids []string) bool
 }
 
 // StatsCtx collects the statistics and flushes it to the database.  Its default
@@ -96,23 +115,24 @@ type StatsCtx struct {
 	// interface.
 	configModified func()
 
+	// confMu protects ignored, limit, and enabled.
+	confMu *sync.RWMutex
+
+	// ignored contains the list of host names, which should not be counted,
+	// and matches them.
+	ignored *aghnet.IgnoreEngine
+
+	// shouldCountClient returns client's ignore setting.
+	shouldCountClient func([]string) bool
+
 	// filename is the name of database file.
 	filename string
 
-	// lock protects all the fields below.
-	lock sync.Mutex
+	// limit is an upper limit for collecting statistics.
+	limit time.Duration
 
 	// enabled tells if the statistics are enabled.
 	enabled bool
-
-	// limitHours is the maximum number of hours to collect statistics into the
-	// current unit.
-	//
-	// TODO(s.chzhen):  Rewrite to use time.Duration.
-	limitHours uint32
-
-	// ignored is the list of host names, which should not be counted.
-	ignored *stringutil.Set
 }
 
 // New creates s from conf and properly initializes it.  Don't use s before
@@ -120,17 +140,28 @@ type StatsCtx struct {
 func New(conf Config) (s *StatsCtx, err error) {
 	defer withRecovered(&err)
 
+	err = validateIvl(conf.Limit)
+	if err != nil {
+		return nil, fmt.Errorf("unsupported interval: %w", err)
+	}
+
+	if conf.ShouldCountClient == nil {
+		return nil, errors.Error("should count client is unspecified")
+	}
+
 	s = &StatsCtx{
-		enabled:        conf.Enabled,
 		currMu:         &sync.RWMutex{},
-		filename:       conf.Filename,
-		configModified: conf.ConfigModified,
 		httpRegister:   conf.HTTPRegister,
-		ignored:        conf.Ignored,
+		configModified: conf.ConfigModified,
+		filename:       conf.Filename,
+
+		confMu:            &sync.RWMutex{},
+		ignored:           conf.Ignored,
+		shouldCountClient: conf.ShouldCountClient,
+		limit:             conf.Limit,
+		enabled:           conf.Enabled,
 	}
-	if s.limitHours = conf.LimitDays * 24; !checkInterval(conf.LimitDays) {
-		s.limitHours = 24
-	}
+
 	if s.unitIDGen = newUnitID; conf.UnitID != nil {
 		s.unitIDGen = conf.UnitID
 	}
@@ -150,7 +181,7 @@ func New(conf Config) (s *StatsCtx, err error) {
 		return nil, fmt.Errorf("stats: opening a transaction: %w", err)
 	}
 
-	deleted := deleteOldUnits(tx, id-s.limitHours-1)
+	deleted := deleteOldUnits(tx, id-uint32(s.limit.Hours())-1)
 	udb = loadUnitFromDB(tx, id)
 
 	err = finishTxn(tx, deleted > 0)
@@ -195,7 +226,7 @@ func (s *StatsCtx) Start() {
 	go s.periodicFlush()
 }
 
-// Close implements the io.Closer interface for *StatsCtx.
+// Close implements the [io.Closer] interface for *StatsCtx.
 func (s *StatsCtx) Close() (err error) {
 	defer func() { err = errors.Annotate(err, "stats: closing: %w") }()
 
@@ -226,17 +257,19 @@ func (s *StatsCtx) Close() (err error) {
 	return udb.flushUnitToDB(tx, s.curr.id)
 }
 
-// Update implements the Interface interface for *StatsCtx.
-func (s *StatsCtx) Update(e Entry) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+// Update implements the [Interface] interface for *StatsCtx.  e must not be
+// nil.
+func (s *StatsCtx) Update(e *Entry) {
+	s.confMu.Lock()
+	defer s.confMu.Unlock()
 
-	if !s.enabled || s.limitHours == 0 {
+	if !s.enabled || s.limit == 0 {
 		return
 	}
 
-	if e.Result == 0 || e.Result >= resultLast || e.Domain == "" || e.Client == "" {
-		log.Debug("stats: malformed entry")
+	err := e.validate()
+	if err != nil {
+		log.Debug("stats: updating: validating entry: %s", err)
 
 		return
 	}
@@ -250,30 +283,25 @@ func (s *StatsCtx) Update(e Entry) {
 		return
 	}
 
-	clientID := e.Client
-	if ip := net.ParseIP(clientID); ip != nil {
-		clientID = ip.String()
-	}
-
-	s.curr.add(e.Result, e.Domain, clientID, uint64(e.Time))
+	s.curr.add(e)
 }
 
-// WriteDiskConfig implements the Interface interface for *StatsCtx.
+// WriteDiskConfig implements the [Interface] interface for *StatsCtx.
 func (s *StatsCtx) WriteDiskConfig(dc *Config) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.confMu.RLock()
+	defer s.confMu.RUnlock()
 
-	dc.LimitDays = s.limitHours / 24
-	dc.Enabled = s.enabled
 	dc.Ignored = s.ignored
+	dc.Limit = s.limit
+	dc.Enabled = s.enabled
 }
 
 // TopClientsIP implements the [Interface] interface for *StatsCtx.
 func (s *StatsCtx) TopClientsIP(maxCount uint) (ips []netip.Addr) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.confMu.RLock()
+	defer s.confMu.RUnlock()
 
-	limit := s.limitHours
+	limit := uint32(s.limit.Hours())
 	if !s.enabled || limit == 0 {
 		return nil
 	}
@@ -366,8 +394,8 @@ func (s *StatsCtx) openDB() (err error) {
 func (s *StatsCtx) flush() (cont bool, sleepFor time.Duration) {
 	id := s.unitIDGen()
 
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.confMu.Lock()
+	defer s.confMu.Unlock()
 
 	s.currMu.Lock()
 	defer s.currMu.Unlock()
@@ -377,11 +405,17 @@ func (s *StatsCtx) flush() (cont bool, sleepFor time.Duration) {
 		return false, 0
 	}
 
-	limit := s.limitHours
+	limit := uint32(s.limit.Hours())
 	if limit == 0 || ptr.id == id {
 		return true, time.Second
 	}
 
+	return s.flushDB(id, limit, ptr)
+}
+
+// flushDB flushes the unit to the database.  confMu and currMu are expected to
+// be locked.
+func (s *StatsCtx) flushDB(id, limit uint32, ptr *unit) (cont bool, sleepFor time.Duration) {
 	db := s.db.Load()
 	if db == nil {
 		return true, 0
@@ -436,14 +470,14 @@ func (s *StatsCtx) periodicFlush() {
 	log.Debug("periodic flushing finished")
 }
 
-func (s *StatsCtx) setLimit(limitDays int) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	if limitDays != 0 {
+// setLimit sets the limit.  s.lock is expected to be locked.
+//
+// TODO(s.chzhen):  Remove it when migration to the new API is over.
+func (s *StatsCtx) setLimit(limit time.Duration) {
+	if limit != 0 {
 		s.enabled = true
-		s.limitHours = uint32(24 * limitDays)
-		log.Debug("stats: set limit: %d days", limitDays)
+		s.limit = limit
+		log.Debug("stats: set limit: %d days", limit/timeutil.Day)
 
 		return
 	}
@@ -503,7 +537,8 @@ func (s *StatsCtx) clear() (err error) {
 	return nil
 }
 
-func (s *StatsCtx) loadUnits(limit uint32) (units []*unitDB, firstID uint32) {
+// loadUnits returns stored units from the database and current unit ID.
+func (s *StatsCtx) loadUnits(limit uint32) (units []*unitDB, curID uint32) {
 	db := s.db.Load()
 	if db == nil {
 		return nil, 0
@@ -523,7 +558,6 @@ func (s *StatsCtx) loadUnits(limit uint32) (units []*unitDB, firstID uint32) {
 
 	cur := s.curr
 
-	var curID uint32
 	if cur != nil {
 		curID = cur.id
 	} else {
@@ -532,7 +566,7 @@ func (s *StatsCtx) loadUnits(limit uint32) (units []*unitDB, firstID uint32) {
 
 	// Per-hour units.
 	units = make([]*unitDB, 0, limit)
-	firstID = curID - limit + 1
+	firstID := curID - limit + 1
 	for i := firstID; i != curID; i++ {
 		u := loadUnitFromDB(tx, i)
 		if u == nil {
@@ -554,15 +588,23 @@ func (s *StatsCtx) loadUnits(limit uint32) (units []*unitDB, firstID uint32) {
 		log.Fatalf("loaded %d units whilst the desired number is %d", unitsLen, limit)
 	}
 
-	return units, firstID
+	return units, curID
 }
 
 // ShouldCount returns true if request for the host should be counted.
-func (s *StatsCtx) ShouldCount(host string, _, _ uint16) bool {
+func (s *StatsCtx) ShouldCount(host string, _, _ uint16, ids []string) bool {
+	s.confMu.RLock()
+	defer s.confMu.RUnlock()
+
+	if !s.shouldCountClient(ids) {
+		return false
+	}
+
 	return !s.isIgnored(host)
 }
 
-// isIgnored returns true if the host is in the Ignored list.
+// isIgnored returns true if the host is in the ignored domains list.  It
+// assumes that s.confMu is locked for reading.
 func (s *StatsCtx) isIgnored(host string) bool {
 	return s.ignored.Has(host)
 }

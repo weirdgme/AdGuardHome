@@ -5,14 +5,15 @@ package dhcpd
 import (
 	"net"
 	"net/netip"
-	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/AdguardTeam/AdGuardHome/internal/dhcpsvc"
 	"github.com/AdguardTeam/golibs/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 )
 
 func TestMain(m *testing.M) {
@@ -27,7 +28,7 @@ func TestDB(t *testing.T) {
 	var err error
 	s := server{
 		conf: &ServerConfig{
-			DBFilePath: dbFilename,
+			dbFilePath: filepath.Join(t.TempDir(), dataFilename),
 		},
 	}
 
@@ -44,15 +45,15 @@ func TestDB(t *testing.T) {
 	s.srv6, err = v6Create(V6ServerConf{})
 	require.NoError(t, err)
 
-	leases := []*Lease{{
+	leases := []*dhcpsvc.Lease{{
 		Expiry:   time.Now().Add(time.Hour),
 		Hostname: "static-1.local",
 		HWAddr:   net.HardwareAddr{0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA},
-		IP:       net.IP{192, 168, 10, 100},
+		IP:       netip.MustParseAddr("192.168.10.100"),
 	}, {
 		Hostname: "static-2.local",
 		HWAddr:   net.HardwareAddr{0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xBB},
-		IP:       net.IP{192, 168, 10, 101},
+		IP:       netip.MustParseAddr("192.168.10.101"),
 	}}
 
 	srv4, ok := s.srv4.(*v4Server)
@@ -67,8 +68,6 @@ func TestDB(t *testing.T) {
 	err = s.dbStore()
 	require.NoError(t, err)
 
-	testutil.CleanupAndRequireSuccess(t, func() (err error) { return os.Remove(dbFilename) })
-
 	err = s.srv4.ResetLeases(nil)
 	require.NoError(t, err)
 
@@ -78,36 +77,13 @@ func TestDB(t *testing.T) {
 	ll := s.srv4.GetLeases(LeasesAll)
 	require.Len(t, ll, len(leases))
 
-	assert.Equal(t, leases[1].HWAddr, ll[0].HWAddr)
-	assert.Equal(t, leases[1].IP, ll[0].IP)
-	assert.True(t, ll[0].IsStatic())
+	assert.Equal(t, leases[0].HWAddr, ll[0].HWAddr)
+	assert.Equal(t, leases[0].IP, ll[0].IP)
+	assert.Equal(t, leases[0].Expiry.Unix(), ll[0].Expiry.Unix())
 
-	assert.Equal(t, leases[0].HWAddr, ll[1].HWAddr)
-	assert.Equal(t, leases[0].IP, ll[1].IP)
-	assert.Equal(t, leases[0].Expiry.Unix(), ll[1].Expiry.Unix())
-}
-
-func TestNormalizeLeases(t *testing.T) {
-	dynLeases := []*Lease{{
-		HWAddr: net.HardwareAddr{1, 2, 3, 4},
-	}, {
-		HWAddr: net.HardwareAddr{1, 2, 3, 5},
-	}}
-
-	staticLeases := []*Lease{{
-		HWAddr: net.HardwareAddr{1, 2, 3, 4},
-		IP:     net.IP{0, 2, 3, 4},
-	}, {
-		HWAddr: net.HardwareAddr{2, 2, 3, 4},
-	}}
-
-	leases := normalizeLeases(staticLeases, dynLeases)
-	require.Len(t, leases, 3)
-
-	assert.Equal(t, leases[0].HWAddr, dynLeases[0].HWAddr)
-	assert.Equal(t, leases[0].IP, staticLeases[0].IP)
-	assert.Equal(t, leases[1].HWAddr, staticLeases[1].HWAddr)
-	assert.Equal(t, leases[2].HWAddr, dynLeases[1].HWAddr)
+	assert.Equal(t, leases[1].HWAddr, ll[1].HWAddr)
+	assert.Equal(t, leases[1].IP, ll[1].IP)
+	assert.True(t, ll[1].IsStatic)
 }
 
 func TestV4Server_badRange(t *testing.T) {

@@ -26,15 +26,14 @@ type temporaryError interface {
 	Temporary() (ok bool)
 }
 
-// Get the latest available version from the Internet
-func handleGetVersionJSON(w http.ResponseWriter, r *http.Request) {
+// handleVersionJSON is the handler for the POST /control/version.json HTTP API.
+//
+// TODO(a.garipov): Find out if this API used with a GET method by anyone.
+func (web *webAPI) handleVersionJSON(w http.ResponseWriter, r *http.Request) {
 	resp := &versionResponse{}
-	if Context.disableUpdate {
+	if web.conf.disableUpdate {
 		resp.Disabled = true
-		err := json.NewEncoder(w).Encode(resp)
-		if err != nil {
-			aghhttp.Error(r, w, http.StatusInternalServerError, "writing body: %s", err)
-		}
+		aghhttp.WriteJSONResponseOK(w, r, resp)
 
 		return
 	}
@@ -53,7 +52,7 @@ func handleGetVersionJSON(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	err = requestVersionInfo(resp, req.Recheck)
+	err = web.requestVersionInfo(resp, req.Recheck)
 	if err != nil {
 		// Don't wrap the error, because it's informative enough as is.
 		aghhttp.Error(r, w, http.StatusBadGateway, "%s", err)
@@ -69,14 +68,15 @@ func handleGetVersionJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = aghhttp.WriteJSONResponse(w, r, resp)
+	aghhttp.WriteJSONResponseOK(w, r, resp)
 }
 
 // requestVersionInfo sets the VersionInfo field of resp if it can reach the
 // update server.
-func requestVersionInfo(resp *versionResponse, recheck bool) (err error) {
+func (web *webAPI) requestVersionInfo(resp *versionResponse, recheck bool) (err error) {
+	updater := web.conf.updater
 	for i := 0; i != 3; i++ {
-		resp.VersionInfo, err = Context.updater.VersionInfo(recheck)
+		resp.VersionInfo, err = updater.VersionInfo(recheck)
 		if err != nil {
 			var terr temporaryError
 			if errors.As(err, &terr) && terr.Temporary() {
@@ -96,17 +96,18 @@ func requestVersionInfo(resp *versionResponse, recheck bool) (err error) {
 	}
 
 	if err != nil {
-		vcu := Context.updater.VersionCheckURL()
+		vcu := updater.VersionCheckURL()
 
-		return fmt.Errorf("getting version info from %s: %s", vcu, err)
+		return fmt.Errorf("getting version info from %s: %w", vcu, err)
 	}
 
 	return nil
 }
 
 // handleUpdate performs an update to the latest available version procedure.
-func handleUpdate(w http.ResponseWriter, r *http.Request) {
-	if Context.updater.NewVersion() == "" {
+func (web *webAPI) handleUpdate(w http.ResponseWriter, r *http.Request) {
+	updater := web.conf.updater
+	if updater.NewVersion() == "" {
 		aghhttp.Error(r, w, http.StatusBadRequest, "/update request isn't allowed now")
 
 		return
@@ -123,7 +124,7 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = Context.updater.Update(false)
+	err = updater.Update(false)
 	if err != nil {
 		aghhttp.Error(r, w, http.StatusInternalServerError, "%s", err)
 
@@ -138,7 +139,7 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	// The background context is used because the underlying functions wrap it
 	// with timeout and shut down the server, which handles current request.  It
 	// also should be done in a separate goroutine for the same reason.
-	go finishUpdate(context.Background(), execPath)
+	go finishUpdate(context.Background(), execPath, web.conf.runningAsService)
 }
 
 // versionResponse is the response for /control/version.json endpoint.
@@ -158,7 +159,9 @@ func (vr *versionResponse) setAllowedToAutoUpdate() (err error) {
 	Context.tls.WriteDiskConfig(tlsConf)
 
 	canUpdate := true
-	if tlsConfUsesPrivilegedPorts(tlsConf) || config.BindPort < 1024 || config.DNS.Port < 1024 {
+	if tlsConfUsesPrivilegedPorts(tlsConf) ||
+		config.HTTPConfig.Address.Port() < 1024 ||
+		config.DNS.Port < 1024 {
 		canUpdate, err = aghnet.CanBindPrivilegedPorts()
 		if err != nil {
 			return fmt.Errorf("checking ability to bind privileged ports: %w", err)
@@ -177,7 +180,7 @@ func tlsConfUsesPrivilegedPorts(c *tlsConfigSettings) (ok bool) {
 }
 
 // finishUpdate completes an update procedure.
-func finishUpdate(ctx context.Context, execPath string) {
+func finishUpdate(ctx context.Context, execPath string, runningAsService bool) {
 	var err error
 
 	log.Info("stopping all tasks")
@@ -186,7 +189,7 @@ func finishUpdate(ctx context.Context, execPath string) {
 	cleanupAlways()
 
 	if runtime.GOOS == "windows" {
-		if Context.runningAsService {
+		if runningAsService {
 			// NOTE: We can't restart the service via "kardianos/service"
 			// package, because it kills the process first we can't start a new
 			// instance, because Windows doesn't allow it.

@@ -4,20 +4,23 @@ import React, { useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { Trans, useTranslation } from 'react-i18next';
 import { useDispatch, useSelector } from 'react-redux';
+import { useHistory, useLocation } from 'react-router-dom';
 import ReactTable from 'react-table';
 
-import { getAllBlockedServices } from '../../../../actions/services';
+import { getAllBlockedServices, getBlockedServices } from '../../../../actions/services';
+import { initSettings } from '../../../../actions';
 import {
     splitByNewLine,
     countClientsStatistics,
     sortIp,
     getService,
 } from '../../../../helpers/helpers';
-import { MODAL_TYPE } from '../../../../helpers/constants';
+import { MODAL_TYPE, LOCAL_TIMEZONE_VALUE, TABLES_MIN_ROWS } from '../../../../helpers/constants';
 import Card from '../../../ui/Card';
 import CellWrap from '../../../ui/CellWrap';
 import LogsSearchLink from '../../../ui/LogsSearchLink';
 import Modal from '../Modal';
+import { LocalStorageHelper, LOCAL_STORAGE_KEYS } from '../../../../helpers/localStorageHelper';
 
 const ClientsTable = ({
     clients,
@@ -37,10 +40,25 @@ const ClientsTable = ({
 }) => {
     const [t] = useTranslation();
     const dispatch = useDispatch();
+    const location = useLocation();
+    const history = useHistory();
     const services = useSelector((store) => store?.services);
+    const globalSettings = useSelector((store) => store?.settings.settingsList) || {};
+    const params = new URLSearchParams(location.search);
+    const clientId = params.get('clientId');
+
+    const { safesearch } = globalSettings;
 
     useEffect(() => {
         dispatch(getAllBlockedServices());
+        dispatch(getBlockedServices());
+        dispatch(initSettings());
+
+        if (clientId) {
+            toggleClientModal({
+                type: MODAL_TYPE.ADD_CLIENT,
+            });
+        }
     }, []);
 
     const handleFormAdd = (values) => {
@@ -52,7 +70,7 @@ const ClientsTable = ({
     };
 
     const handleSubmit = (values) => {
-        const config = values;
+        const config = { ...values };
 
         if (values) {
             if (values.blocked_services) {
@@ -72,12 +90,20 @@ const ClientsTable = ({
             } else {
                 config.tags = [];
             }
+
+            if (typeof values.upstreams_cache_size === 'string') {
+                config.upstreams_cache_size = 0;
+            }
         }
 
-        if (modalType === MODAL_TYPE.EDIT_FILTERS) {
+        if (modalType === MODAL_TYPE.EDIT_CLIENT) {
             handleFormUpdate(config, modalClientName);
         } else {
             handleFormAdd(config);
+        }
+
+        if (clientId) {
+            history.push('/#clients');
         }
     };
 
@@ -107,6 +133,10 @@ const ClientsTable = ({
             tags: [],
             use_global_settings: true,
             use_global_blocked_services: true,
+            blocked_services_schedule: {
+                time_zone: LOCAL_TIMEZONE_VALUE,
+            },
+            safe_search: { ...(safesearch || {}) },
         };
     };
 
@@ -115,6 +145,14 @@ const ClientsTable = ({
         if (window.confirm(t('client_confirm_delete', { key: data.name }))) {
             deleteClient(data);
             getStats();
+        }
+    };
+
+    const handleClose = () => {
+        toggleClientModal();
+
+        if (clientId) {
+            history.push('/#clients');
         }
     };
 
@@ -283,14 +321,14 @@ const ClientsTable = ({
                             type="button"
                             className="btn btn-icon btn-outline-primary btn-sm mr-2"
                             onClick={() => toggleClientModal({
-                                type: MODAL_TYPE.EDIT_FILTERS,
+                                type: MODAL_TYPE.EDIT_CLIENT,
                                 name: clientName,
                             })
                             }
                             disabled={processingUpdating}
                             title={t('edit_table_action')}
                         >
-                            <svg className="icons">
+                            <svg className="icons icon12">
                                 <use xlinkHref="#edit" />
                             </svg>
                         </button>
@@ -301,7 +339,7 @@ const ClientsTable = ({
                             disabled={processingDeleting}
                             title={t('delete_table_action')}
                         >
-                            <svg className="icons">
+                            <svg className="icons icon12">
                                 <use xlinkHref="#delete" />
                             </svg>
                         </button>
@@ -332,8 +370,11 @@ const ClientsTable = ({
                     ]}
                     className="-striped -highlight card-table-overflow"
                     showPagination
-                    defaultPageSize={10}
-                    minRows={5}
+                    defaultPageSize={LocalStorageHelper.getItem(LOCAL_STORAGE_KEYS.CLIENTS_PAGE_SIZE) || 10}
+                    onPageSizeChange={(size) => (
+                        LocalStorageHelper.setItem(LOCAL_STORAGE_KEYS.CLIENTS_PAGE_SIZE, size)
+                    )}
+                    minRows={TABLES_MIN_ROWS}
                     ofText="/"
                     previousText={t('previous_btn')}
                     nextText={t('next_btn')}
@@ -353,12 +394,13 @@ const ClientsTable = ({
                 <Modal
                     isModalOpen={isModalOpen}
                     modalType={modalType}
-                    toggleClientModal={toggleClientModal}
+                    handleClose={handleClose}
                     currentClientData={currentClientData}
                     handleSubmit={handleSubmit}
                     processingAdding={processingAdding}
                     processingUpdating={processingUpdating}
                     tagsOptions={tagsOptions}
+                    clientId={clientId}
                 />
             </>
         </Card>

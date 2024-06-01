@@ -13,7 +13,7 @@ export const getStatsConfigSuccess = createAction('GET_STATS_CONFIG_SUCCESS');
 export const getStatsConfig = () => async (dispatch) => {
     dispatch(getStatsConfigRequest());
     try {
-        const data = await apiClient.getStatsInfo();
+        const data = await apiClient.getStatsConfig();
         dispatch(getStatsConfigSuccess(data));
     } catch (error) {
         dispatch(addErrorToast({ error }));
@@ -56,6 +56,8 @@ export const getStats = () => async (dispatch) => {
             top_clients: topClientsWithInfo,
             top_queried_domains: normalizeTopStats(stats.top_queried_domains),
             avg_processing_time: secondsToMilliseconds(stats.avg_processing_time),
+            top_upstreams_responses: normalizeTopStats(stats.top_upstreams_responses),
+            top_upstrems_avg_time: normalizeTopStats(stats.top_upstreams_avg_time),
         };
 
         dispatch(getStatsSuccess(normalizedStats));

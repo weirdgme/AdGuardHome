@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/AdguardTeam/AdGuardHome/internal/configmigrate"
 	"github.com/AdguardTeam/AdGuardHome/internal/version"
 	"github.com/AdguardTeam/golibs/log"
 	"github.com/AdguardTeam/golibs/stringutil"
@@ -35,10 +36,17 @@ type options struct {
 	serviceControlAction string
 
 	// bindHost is the address on which to serve the HTTP UI.
+	//
+	// Deprecated: Use bindAddr.
 	bindHost netip.Addr
 
 	// bindPort is the port on which to serve the HTTP UI.
-	bindPort int
+	//
+	// Deprecated: Use bindAddr.
+	bindPort uint16
+
+	// bindAddr is the address to serve the web UI on.
+	bindAddr netip.AddrPort
 
 	// checkConfig is true if the current invocation is only required to check
 	// the configuration file and exit.
@@ -147,20 +155,17 @@ var cmdLineOpts = []cmdLineOpt{{
 
 		return o.bindHost.String(), true
 	},
-	description: "Host address to bind HTTP server on.",
-	longName:    "host",
-	shortName:   "h",
+	description: "Deprecated. Host address to bind HTTP server on. Use --web-addr. " +
+		"The short -h will work as --help in the future.",
+	longName:  "host",
+	shortName: "h",
 }, {
 	updateWithValue: func(o options, v string) (options, error) {
-		var err error
-		var p int
-		minPort, maxPort := 0, 1<<16-1
-		if p, err = strconv.Atoi(v); err != nil {
-			err = fmt.Errorf("port %q is not a number", v)
-		} else if p < minPort || p > maxPort {
-			err = fmt.Errorf("port %d not in range %d - %d", p, minPort, maxPort)
+		p, err := strconv.ParseUint(v, 10, 16)
+		if err != nil {
+			err = fmt.Errorf("parsing port: %w", err)
 		} else {
-			o.bindPort = p
+			o.bindPort = uint16(p)
 		}
 
 		return o, err
@@ -172,11 +177,25 @@ var cmdLineOpts = []cmdLineOpt{{
 			return "", false
 		}
 
-		return strconv.Itoa(o.bindPort), true
+		return strconv.Itoa(int(o.bindPort)), true
 	},
-	description: "Port to serve HTTP pages on.",
+	description: "Deprecated. Port to serve HTTP pages on. Use --web-addr.",
 	longName:    "port",
 	shortName:   "p",
+}, {
+	updateWithValue: func(o options, v string) (oo options, err error) {
+		o.bindAddr, err = netip.ParseAddrPort(v)
+
+		return o, err
+	},
+	updateNoValue: nil,
+	effect:        nil,
+	serialize: func(o options) (val string, ok bool) {
+		return o.bindAddr.String(), o.bindAddr.IsValid()
+	},
+	description: "Address to serve the web UI on, in the host:port format.",
+	longName:    "web-addr",
+	shortName:   "",
 }, {
 	updateWithValue: func(o options, v string) (options, error) {
 		o.serviceControlAction = v
@@ -249,15 +268,19 @@ var cmdLineOpts = []cmdLineOpt{{
 	updateNoValue:   func(o options) (options, error) { o.noEtcHosts = true; return o, nil },
 	effect: func(_ options, _ string) (f effect, err error) {
 		log.Info(
-			"warning: --no-etc-hosts flag is deprecated and will be removed in the future versions",
+			"warning: --no-etc-hosts flag is deprecated " +
+				"and will be removed in the future versions; " +
+				"set clients.runtime_sources.hosts and dns.hostsfile_enabled " +
+				"in the configuration file to false instead",
 		)
 
 		return nil, nil
 	},
-	serialize:   func(o options) (val string, ok bool) { return "", o.noEtcHosts },
-	description: "Deprecated.  Do not use the OS-provided hosts.",
-	longName:    "no-etc-hosts",
-	shortName:   "",
+	serialize: func(o options) (val string, ok bool) { return "", o.noEtcHosts },
+	description: "Deprecated: use clients.runtime_sources.hosts and dns.hostsfile_enabled " +
+		"instead.  Do not use the OS-provided hosts.",
+	longName:  "no-etc-hosts",
+	shortName: "",
 }, {
 	updateWithValue: nil,
 	updateNoValue:   func(o options) (options, error) { o.localFrontend = true; return o, nil },
@@ -288,7 +311,7 @@ var cmdLineOpts = []cmdLineOpt{{
 	effect: func(o options, exec string) (effect, error) {
 		return func() error {
 			if o.verbose {
-				fmt.Println(version.Verbose())
+				fmt.Print(version.Verbose(configmigrate.LastSchemaVersion))
 			} else {
 				fmt.Println(version.Full())
 			}

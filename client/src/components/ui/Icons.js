@@ -1,3 +1,4 @@
+/* eslint-disable react/no-unknown-property */
 import React from 'react';
 
 import './Icons.css';
@@ -86,10 +87,10 @@ const Icons = () => (
                 d="m19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1 -2.83 0l-.06-.06a1.65 1.65 0 0 0 -1.82-.33 1.65 1.65 0 0 0 -1 1.51v.17a2 2 0 0 1 -2 2 2 2 0 0 1 -2-2v-.09a1.65 1.65 0 0 0 -1.08-1.51 1.65 1.65 0 0 0 -1.82.33l-.06.06a2 2 0 0 1 -2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0 -1.51-1h-.17a2 2 0 0 1 -2-2 2 2 0 0 1 2-2h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0 -.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51v-.17a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0 -.33 1.82v.08a1.65 1.65 0 0 0 1.51 1h.17a2 2 0 0 1 2 2 2 2 0 0 1 -2 2h-.09a1.65 1.65 0 0 0 -1.51 1z" />
         </symbol>
 
-        <symbol id="refresh" viewBox="0 0 24 24" stroke="currentColor" fill="none"
-                strokeLinecap="round" strokeLinejoin="round" strokeWidth="2">
-            <path d="M23 4v6h-6M1 20v-6h6" />
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+        <symbol id="refresh" viewBox="0 0 24 24" stroke="currentColor" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
         </symbol>
 
         <symbol id="dns_privacy" viewBox="0 0 30 30" stroke="none" fill="currentColor"
@@ -181,6 +182,12 @@ const Icons = () => (
             </svg>
         </symbol>
 
+        <symbol id="arrow-down" viewBox="0 0 24 24" fill="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg">
+                <path fillRule="evenodd" d="M6.2 8.2a.64.64 0 0 1 .94 0L12 13.32l4.86-5.1a.64.64 0 0 1 .94 0c.27.27.27.71 0 .98l-5.33 5.6a.64.64 0 0 1-.94 0L6.2 9.2a.72.72 0 0 1 0-.98Z" clipRule="evenodd"/>
+            </svg>
+        </symbol>
+
         <symbol id="arrow-right" viewBox="0 0 24 24" stroke="currentColor"
                 strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5">
             <svg width="24" height="24" xmlns="http://www.w3.org/2000/svg">
@@ -198,12 +205,49 @@ const Icons = () => (
             </svg>
         </symbol>
 
-        <symbol id="chevron-down" viewBox="0 0 24 24">
+        <symbol id="auto" width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <path fillRule="evenodd" clipRule="evenodd" d="M12 3C16.9706 3 21 7.02944 21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3Z" stroke="currentColor" strokeWidth="1.5" />
+            <path fillRule="evenodd" clipRule="evenodd" d="M12 3V21C16.9706 21 21 16.9706 21 12C21 7.02944 16.9706 3 12 3Z" fill="currentColor" stroke="currentColor" strokeWidth="1.5" />
+        </symbol>
+
+        <symbol id="dark" width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <path d="M3.80737 15.731L3.9895 15.0034C3.71002 14.9335 3.41517 15.0298 3.23088 15.2512C3.0466 15.4727 3.00545 15.7801 3.12501 16.0422L3.80737 15.731ZM14.1926 3.26892L14.3747 2.54137C14.0953 2.47141 13.8004 2.56772 13.6161 2.78917C13.4318 3.01062 13.3907 3.31806 13.5102 3.58018L14.1926 3.26892ZM12 20.2499C8.66479 20.2499 5.79026 18.2708 4.48974 15.4197L3.12501 16.0422C4.66034 19.4081 8.05588 21.7499 12 21.7499V20.2499ZM20.25 11.9999C20.25 16.5563 16.5563 20.2499 12 20.2499V21.7499C17.3848 21.7499 21.75 17.3847 21.75 11.9999H20.25ZM14.0105 3.99647C17.5955 4.89391 20.25 8.13787 20.25 11.9999H21.75C21.75 7.43347 18.6114 3.60193 14.3747 2.54137L14.0105 3.99647ZM13.5102 3.58018C13.9851 4.6211 14.25 5.77857 14.25 6.99995H15.75C15.75 5.5595 15.4371 4.1901 14.875 2.95766L13.5102 3.58018ZM14.25 6.99995C14.25 11.5563 10.5563 15.2499 5.99999 15.2499V16.7499C11.3848 16.7499 15.75 12.3847 15.75 6.99995H14.25ZM5.99999 15.2499C5.30559 15.2499 4.63225 15.1643 3.9895 15.0034L3.62525 16.4585C4.38616 16.649 5.18181 16.7499 5.99999 16.7499V15.2499Z" fill="currentColor" />
+        </symbol>
+
+        <symbol id="light" width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <path d="M12 3.75C16.5563 3.75 20.25 7.44365 20.25 12H21.75C21.75 6.61522 17.3848 2.25 12 2.25V3.75ZM20.25 12C20.25 16.5563 16.5563 20.25 12 20.25V21.75C17.3848 21.75 21.75 17.3848 21.75 12H20.25ZM12 20.25C7.44365 20.25 3.75 16.5563 3.75 12H2.25C2.25 17.3848 6.61522 21.75 12 21.75V20.25ZM3.75 12C3.75 7.44365 7.44365 3.75 12 3.75V2.25C6.61522 2.25 2.25 6.61522 2.25 12H3.75Z" fill="currentColor" />
+            <path fillRule="evenodd" clipRule="evenodd" d="M12 10C10.8954 10 10 10.8954 10 12C10 13.1046 10.8954 14 12 14C13.1046 14 14 13.1046 14 12C13.9987 10.896 13.104 10.0013 12 10Z" fill="currentColor" />
+        </symbol>
+
+        <symbol id="chevron-down" width="24" height="24" viewBox="0 0 24 24">
             <g fill="none" fillRule="evenodd">
                 <path d="M0 0h24v24H0z" fill="#878787" fillOpacity=".01" />
-                <path stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
-                      d="M8.036 10.93l3.93 4.07 4.068-3.93" />
+                <path stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" d="M8.036 10.93l3.93 4.07 4.068-3.93" />
             </g>
+        </symbol>
+
+        <symbol id="calendar" fill="none" height="24" viewBox="0 0 24 24" width="24" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="4" y="5.5" width="16" height="14" rx="3" />
+            <path d="M12 4V7" />
+            <path d="M8 4L8 7" />
+            <path d="M16 4V7" />
+            <path d="M9.7397 15.5V11L8 13" />
+            <path d="M14.7397 15.5V11L13 13" />
+        </symbol>
+
+        <symbol id="watch" fill="none" height="24" viewBox="0 0 24 24" width="24" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M16.1215 12.1213H11.8789V7.87866" />
+        </symbol>
+
+        <symbol id="bullets" width="24" height="24" viewBox="0 0 24 24">
+            <path fillRule="evenodd" clipRule="evenodd" d="M12 7C11.1716 7 10.5 6.32843 10.5 5.5C10.5 4.67157 11.1716 4 12 4C12.8284 4 13.5 4.67157 13.5 5.5C13.5 6.32843 12.8284 7 12 7Z" fill="currentColor" />
+            <path fillRule="evenodd" clipRule="evenodd" d="M12 13.5C11.1716 13.5 10.5 12.8284 10.5 12C10.5 11.1716 11.1716 10.5 12 10.5C12.8284 10.5 13.5 11.1716 13.5 12C13.5 12.8284 12.8284 13.5 12 13.5Z" fill="currentColor" />
+            <path fillRule="evenodd" clipRule="evenodd" d="M12 20C11.1716 20 10.5 19.3284 10.5 18.5C10.5 17.6716 11.1716 17 12 17C12.8284 17 13.5 17.6716 13.5 18.5C13.5 19.3284 12.8284 20 12 20Z" fill="currentColor" />
+        </symbol>
+
+        <symbol id="check" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 11.7665L10.5878 17L19 8" />
         </symbol>
     </svg>
 );

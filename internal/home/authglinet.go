@@ -9,9 +9,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/AdguardTeam/AdGuardHome/internal/aghio"
-	"github.com/AdguardTeam/AdGuardHome/internal/aghos"
+	"github.com/AdguardTeam/golibs/ioutil"
 	"github.com/AdguardTeam/golibs/log"
+	"github.com/josharian/native"
 )
 
 // GLMode - enable GL-Inet compatibility mode
@@ -83,12 +83,7 @@ func glGetTokenDate(file string) uint32 {
 		}
 	}()
 
-	fileReader, err := aghio.LimitReader(f, MaxFileSize)
-	if err != nil {
-		log.Error("creating limited reader: %s", err)
-
-		return 0
-	}
+	fileReader := ioutil.LimitReader(f, MaxFileSize)
 
 	var dateToken uint32
 
@@ -102,7 +97,7 @@ func glGetTokenDate(file string) uint32 {
 
 	buf := bytes.NewBuffer(bs)
 
-	err = binary.Read(buf, aghos.NativeEndian, &dateToken)
+	err = binary.Read(buf, native.Endian, &dateToken)
 	if err != nil {
 		log.Error("decoding token: %s", err)
 

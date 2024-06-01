@@ -49,6 +49,7 @@ const Dhcp = () => {
         isModalOpen,
         processingAdding,
         processingDeleting,
+        processingUpdating,
         processingDhcp,
         v4,
         v6,
@@ -56,6 +57,7 @@ const Dhcp = () => {
         enabled,
         dhcp_available,
         interfaces,
+        modalType,
     } = useSelector((state) => state.dhcp, shallowEqual);
 
     const interface_name = useSelector(
@@ -188,8 +190,8 @@ const Dhcp = () => {
 
     const inputtedIPv4values = dhcp?.values?.v4?.gateway_ip && dhcp?.values?.v4?.subnet_mask;
     const isEmptyConfig = !Object.values(dhcp?.values?.v4 ?? {}).some(Boolean);
-    const disabledLeasesButton = dhcp?.syncErrors || interfaces?.syncErrors
-        || !isInterfaceIncludesIpv4 || isEmptyConfig || processingConfig || !inputtedIPv4values;
+    const disabledLeasesButton = Boolean(dhcp?.syncErrors || interfaces?.syncErrors
+        || !isInterfaceIncludesIpv4 || isEmptyConfig || processingConfig || !inputtedIPv4values);
     const cidr = inputtedIPv4values ? `${dhcp?.values?.v4?.gateway_ip}/${subnetMaskToBitMask(dhcp?.values?.v4?.subnet_mask)}` : '';
 
     return <>
@@ -260,7 +262,7 @@ const Dhcp = () => {
             >
                 <div className="row">
                     <div className="col">
-                        <Leases leases={leases} />
+                        <Leases leases={leases} disabledLeasesButton={disabledLeasesButton}/>
                     </div>
                 </div>
             </Card>}
@@ -273,8 +275,11 @@ const Dhcp = () => {
                         <StaticLeases
                             staticLeases={staticLeases}
                             isModalOpen={isModalOpen}
+                            toggleModal={toggleModal}
+                            modalType={modalType}
                             processingAdding={processingAdding}
                             processingDeleting={processingDeleting}
+                            processingUpdating={processingUpdating}
                             cidr={cidr}
                             rangeStart={dhcp?.values?.v4?.range_start}
                             rangeEnd={dhcp?.values?.v4?.range_end}

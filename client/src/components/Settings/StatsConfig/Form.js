@@ -1,33 +1,62 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import PropTypes from 'prop-types';
-import { Field, reduxForm } from 'redux-form';
+import {
+    change, Field, formValueSelector, reduxForm,
+} from 'redux-form';
 import { Trans, withTranslation } from 'react-i18next';
 import flow from 'lodash/flow';
+import { connect } from 'react-redux';
 
-import { renderRadioField, toNumber, CheckboxField } from '../../../helpers/form';
-import { FORM_NAME, STATS_INTERVALS_DAYS, DISABLED_STATS_INTERVAL } from '../../../helpers/constants';
+import {
+    renderRadioField,
+    toNumber,
+    CheckboxField,
+    renderTextareaField,
+    toFloatNumber,
+    renderInputField,
+} from '../../../helpers/form';
+import {
+    FORM_NAME,
+    STATS_INTERVALS_DAYS,
+    DAY,
+    RETENTION_CUSTOM,
+    RETENTION_CUSTOM_INPUT,
+    CUSTOM_INTERVAL,
+    RETENTION_RANGE,
+} from '../../../helpers/constants';
+import { trimLinesAndRemoveEmpty } from '../../../helpers/helpers';
 import '../FormButton.css';
 
-const getIntervalTitle = (interval, t) => {
-    switch (interval) {
-        case 1:
+const getIntervalTitle = (intervalMs, t) => {
+    switch (intervalMs) {
+        case RETENTION_CUSTOM:
+            return t('settings_custom');
+        case DAY:
             return t('interval_24_hour');
         default:
-            return t('interval_days', { count: interval });
+            return t('interval_days', { count: intervalMs / DAY });
     }
 };
 
-const Form = (props) => {
+let Form = (props) => {
     const {
         handleSubmit,
-        change,
         processing,
         submitting,
         invalid,
         handleReset,
         processingReset,
         t,
+        interval,
+        customInterval,
+        dispatch,
     } = props;
+
+    useEffect(() => {
+        if (STATS_INTERVALS_DAYS.includes(interval)) {
+            dispatch(change(FORM_NAME.STATS_CONFIG, CUSTOM_INTERVAL, null));
+        }
+    }, [interval]);
 
     return (
         <form onSubmit={handleSubmit}>
@@ -38,13 +67,6 @@ const Form = (props) => {
                     component={CheckboxField}
                     placeholder={t('statistics_enable')}
                     disabled={processing}
-                    onChange={(event) => {
-                        if (event.target.checked) {
-                            change('interval', STATS_INTERVALS_DAYS[0]);
-                        } else {
-                            change('interval', DISABLED_STATS_INTERVAL);
-                        }
-                    }}
                 />
             </div>
             <label className="form__label form__label--with-desc">
@@ -55,6 +77,37 @@ const Form = (props) => {
             </div>
             <div className="form__group form__group--settings mt-2">
                 <div className="custom-controls-stacked">
+                    <Field
+                        key={RETENTION_CUSTOM}
+                        name="interval"
+                        type="radio"
+                        component={renderRadioField}
+                        value={STATS_INTERVALS_DAYS.includes(interval)
+                            ? RETENTION_CUSTOM
+                            : interval
+                        }
+                        placeholder={getIntervalTitle(RETENTION_CUSTOM, t)}
+                        normalize={toFloatNumber}
+                        disabled={processing}
+                    />
+                    {!STATS_INTERVALS_DAYS.includes(interval) && (
+                        <div className="form__group--input">
+                            <div className="form__desc form__desc--top">
+                                {t('custom_retention_input')}
+                            </div>
+                            <Field
+                                key={RETENTION_CUSTOM_INPUT}
+                                name={CUSTOM_INTERVAL}
+                                type="number"
+                                className="form-control"
+                                component={renderInputField}
+                                disabled={processing}
+                                normalize={toFloatNumber}
+                                min={RETENTION_RANGE.MIN}
+                                max={RETENTION_RANGE.MAX}
+                            />
+                        </div>
+                    )}
                     {STATS_INTERVALS_DAYS.map((interval) => (
                         <Field
                             key={interval}
@@ -65,20 +118,37 @@ const Form = (props) => {
                             placeholder={getIntervalTitle(interval, t)}
                             normalize={toNumber}
                             disabled={processing}
-                            onChange={(event) => {
-                                if (event.target.checked) {
-                                    change('enabled', true);
-                                }
-                            }}
                         />
                     ))}
                 </div>
+            </div>
+            <label className="form__label form__label--with-desc">
+                <Trans>ignore_domains_title</Trans>
+            </label>
+            <div className="form__desc form__desc--top">
+                <Trans>ignore_domains_desc_stats</Trans>
+            </div>
+            <div className="form__group form__group--settings">
+                <Field
+                    name="ignored"
+                    type="textarea"
+                    className="form-control form-control--textarea font-monospace text-input"
+                    component={renderTextareaField}
+                    placeholder={t('ignore_domains')}
+                    disabled={processing}
+                    normalizeOnBlur={trimLinesAndRemoveEmpty}
+                />
             </div>
             <div className="mt-5">
                 <button
                     type="submit"
                     className="btn btn-success btn-standard btn-large"
-                    disabled={submitting || invalid || processing}
+                    disabled={
+                        submitting
+                        || invalid
+                        || processing
+                        || (!STATS_INTERVALS_DAYS.includes(interval) && !customInterval)
+                    }
                 >
                     <Trans>save_btn</Trans>
                 </button>
@@ -104,7 +174,21 @@ Form.propTypes = {
     processing: PropTypes.bool.isRequired,
     processingReset: PropTypes.bool.isRequired,
     t: PropTypes.func.isRequired,
+    interval: PropTypes.number,
+    customInterval: PropTypes.number,
+    dispatch: PropTypes.func.isRequired,
 };
+
+const selector = formValueSelector(FORM_NAME.STATS_CONFIG);
+
+Form = connect((state) => {
+    const interval = selector(state, 'interval');
+    const customInterval = selector(state, CUSTOM_INTERVAL);
+    return {
+        interval,
+        customInterval,
+    };
+})(Form);
 
 export default flow([
     withTranslation(),

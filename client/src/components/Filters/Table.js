@@ -6,6 +6,7 @@ import CellWrap from '../ui/CellWrap';
 import { MODAL_TYPE } from '../../helpers/constants';
 import { formatDetailedDateTime } from '../../helpers/helpers';
 import { isValidAbsolutePath } from '../../helpers/form';
+import { LOCAL_STORAGE_KEYS, LocalStorageHelper } from '../../helpers/localStorageHelper';
 
 class Table extends Component {
     getDateCell = (row) => CellWrap(row, formatDetailedDateTime);
@@ -48,6 +49,7 @@ class Table extends Component {
             Header: <Trans>list_url_table_header</Trans>,
             accessor: 'url',
             minWidth: 180,
+            // eslint-disable-next-line react/prop-types
             Cell: ({ value }) => (
                 <div className="logs__row">
                     {isValidAbsolutePath(value) ? value
@@ -100,7 +102,7 @@ class Table extends Component {
                             })
                             }
                         >
-                            <svg className="icons">
+                            <svg className="icons icon12">
                                 <use xlinkHref="#edit" />
                             </svg>
                         </button>
@@ -110,7 +112,7 @@ class Table extends Component {
                             onClick={() => handleDelete(url)}
                             title={t('delete_table_action')}
                         >
-                            <svg className="icons">
+                            <svg className="icons icon12">
                                 <use xlinkHref="#delete" />
                             </svg>
                         </button>
@@ -125,12 +127,17 @@ class Table extends Component {
             loading, filters, t, whitelist,
         } = this.props;
 
+        const localStorageKey = whitelist
+            ? LOCAL_STORAGE_KEYS.ALLOWLIST_PAGE_SIZE
+            : LOCAL_STORAGE_KEYS.BLOCKLIST_PAGE_SIZE;
+
         return (
             <ReactTable
                 data={filters}
                 columns={this.columns}
                 showPagination
-                defaultPageSize={10}
+                defaultPageSize={LocalStorageHelper.getItem(localStorageKey) || 10}
+                onPageSizeChange={(size) => LocalStorageHelper.setItem(localStorageKey, size)}
                 loading={loading}
                 minRows={6}
                 ofText="/"

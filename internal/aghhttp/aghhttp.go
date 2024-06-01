@@ -2,12 +2,12 @@
 package aghhttp
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/AdguardTeam/AdGuardHome/internal/version"
+	"github.com/AdguardTeam/golibs/httphdr"
 	"github.com/AdguardTeam/golibs/log"
 )
 
@@ -52,31 +52,11 @@ const textPlainDeprMsg = `using this api with the text/plain content-type is dep
 // deprecation and removal of a plain-text API if the request is made with the
 // "text/plain" content-type.
 func WriteTextPlainDeprecated(w http.ResponseWriter, r *http.Request) (isPlainText bool) {
-	if r.Header.Get(HdrNameContentType) != HdrValTextPlain {
+	if r.Header.Get(httphdr.ContentType) != HdrValTextPlain {
 		return false
 	}
 
 	Error(r, w, http.StatusUnsupportedMediaType, textPlainDeprMsg)
 
 	return true
-}
-
-// WriteJSONResponse sets the content-type header in w.Header() to
-// "application/json", writes a header with a "200 OK" status, encodes resp to
-// w, calls [Error] on any returned error, and returns it as well.
-func WriteJSONResponse(w http.ResponseWriter, r *http.Request, resp any) (err error) {
-	return WriteJSONResponseCode(w, r, http.StatusOK, resp)
-}
-
-// WriteJSONResponseCode is like [WriteJSONResponse] but adds the ability to
-// redefine the status code.
-func WriteJSONResponseCode(w http.ResponseWriter, r *http.Request, code int, resp any) (err error) {
-	w.WriteHeader(code)
-	w.Header().Set(HdrNameContentType, HdrValApplicationJSON)
-	err = json.NewEncoder(w).Encode(resp)
-	if err != nil {
-		Error(r, w, http.StatusInternalServerError, "encoding resp: %s", err)
-	}
-
-	return err
 }

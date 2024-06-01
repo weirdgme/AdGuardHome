@@ -1,7 +1,7 @@
 package querylog
 
 import (
-	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -10,7 +10,6 @@ import (
 	"github.com/AdguardTeam/AdGuardHome/internal/filtering"
 	"github.com/AdguardTeam/golibs/log"
 	"github.com/miekg/dns"
-	"golang.org/x/exp/slices"
 	"golang.org/x/net/idna"
 )
 
@@ -20,12 +19,16 @@ import (
 type jobject = map[string]any
 
 // entriesToJSON converts query log entries to JSON.
-func (l *queryLog) entriesToJSON(entries []*logEntry, oldest time.Time) (res jobject) {
+func entriesToJSON(
+	entries []*logEntry,
+	oldest time.Time,
+	anonFunc aghnet.IPMutFunc,
+) (res jobject) {
 	data := make([]jobject, 0, len(entries))
 
 	// The elements order is already reversed to be from newer to older.
 	for _, entry := range entries {
-		jsonEntry := l.entryToJSON(entry, l.anonymizer.Load())
+		jsonEntry := entryToJSON(entry, anonFunc)
 		data = append(data, jsonEntry)
 	}
 
@@ -41,7 +44,7 @@ func (l *queryLog) entriesToJSON(entries []*logEntry, oldest time.Time) (res job
 }
 
 // entryToJSON converts a log entry's data into an entry for the JSON API.
-func (l *queryLog) entryToJSON(entry *logEntry, anonFunc aghnet.IPMutFunc) (jsonEntry jobject) {
+func entryToJSON(entry *logEntry, anonFunc aghnet.IPMutFunc) (jsonEntry jobject) {
 	hostname := entry.QHost
 	question := jobject{
 		"type":  entry.QType,
@@ -93,14 +96,14 @@ func (l *queryLog) entryToJSON(entry *logEntry, anonFunc aghnet.IPMutFunc) (json
 		jsonEntry["service_name"] = entry.Result.ServiceName
 	}
 
-	l.setMsgData(entry, jsonEntry)
-	l.setOrigAns(entry, jsonEntry)
+	setMsgData(entry, jsonEntry)
+	setOrigAns(entry, jsonEntry)
 
 	return jsonEntry
 }
 
 // setMsgData sets the message data in jsonEntry.
-func (l *queryLog) setMsgData(entry *logEntry, jsonEntry jobject) {
+func setMsgData(entry *logEntry, jsonEntry jobject) {
 	if len(entry.Answer) == 0 {
 		return
 	}
@@ -117,13 +120,13 @@ func (l *queryLog) setMsgData(entry *logEntry, jsonEntry jobject) {
 	// it from there as well.
 	jsonEntry["answer_dnssec"] = entry.AuthenticatedData || msg.AuthenticatedData
 
-	if a := answerToMap(msg); a != nil {
+	if a := answerToJSON(msg); a != nil {
 		jsonEntry["answer"] = a
 	}
 }
 
 // setOrigAns sets the original answer data in jsonEntry.
-func (l *queryLog) setOrigAns(entry *logEntry, jsonEntry jobject) {
+func setOrigAns(entry *logEntry, jsonEntry jobject) {
 	if len(entry.OrigAnswer) == 0 {
 		return
 	}
@@ -136,7 +139,7 @@ func (l *queryLog) setOrigAns(entry *logEntry, jsonEntry jobject) {
 		return
 	}
 
-	if a := answerToMap(orig); a != nil {
+	if a := answerToJSON(orig); a != nil {
 		jsonEntry["original_answer"] = a
 	}
 }
@@ -159,55 +162,24 @@ type dnsAnswer struct {
 	TTL   uint32 `json:"ttl"`
 }
 
-func answerToMap(a *dns.Msg) (answers []*dnsAnswer) {
-	if a == nil || len(a.Answer) == 0 {
+// answerToJSON converts the answer records of msg, if any, to their JSON form.
+func answerToJSON(msg *dns.Msg) (answers []*dnsAnswer) {
+	if msg == nil || len(msg.Answer) == 0 {
 		return nil
 	}
 
-	answers = make([]*dnsAnswer, 0, len(a.Answer))
-	for _, k := range a.Answer {
-		header := k.Header()
-		answer := &dnsAnswer{
+	answers = make([]*dnsAnswer, 0, len(msg.Answer))
+	for _, rr := range msg.Answer {
+		header := rr.Header()
+		a := &dnsAnswer{
 			Type: dns.TypeToString[header.Rrtype],
-			TTL:  header.Ttl,
+			// Remove the header string from the answer value since it's mostly
+			// unnecessary in the log.
+			Value: strings.TrimPrefix(rr.String(), header.String()),
+			TTL:   header.Ttl,
 		}
 
-		// Some special treatment for some well-known types.
-		//
-		// TODO(a.garipov): Consider just calling String() for everyone
-		// instead.
-		switch v := k.(type) {
-		case nil:
-			// Probably unlikely, but go on.
-		case *dns.A:
-			answer.Value = v.A.String()
-		case *dns.AAAA:
-			answer.Value = v.AAAA.String()
-		case *dns.MX:
-			answer.Value = fmt.Sprintf("%v %v", v.Preference, v.Mx)
-		case *dns.CNAME:
-			answer.Value = v.Target
-		case *dns.NS:
-			answer.Value = v.Ns
-		case *dns.SPF:
-			answer.Value = strings.Join(v.Txt, "\n")
-		case *dns.TXT:
-			answer.Value = strings.Join(v.Txt, "\n")
-		case *dns.PTR:
-			answer.Value = v.Ptr
-		case *dns.SOA:
-			answer.Value = fmt.Sprintf("%v %v %v %v %v %v %v", v.Ns, v.Mbox, v.Serial, v.Refresh, v.Retry, v.Expire, v.Minttl)
-		case *dns.CAA:
-			answer.Value = fmt.Sprintf("%v %v \"%v\"", v.Flag, v.Tag, v.Value)
-		case *dns.HINFO:
-			answer.Value = fmt.Sprintf("\"%v\" \"%v\"", v.Cpu, v.Os)
-		case *dns.RRSIG:
-			answer.Value = fmt.Sprintf("%v %v %v %v %v %v %v %v %v", dns.TypeToString[v.TypeCovered], v.Algorithm, v.Labels, v.OrigTtl, v.Expiration, v.Inception, v.KeyTag, v.SignerName, v.Signature)
-		default:
-			answer.Value = v.String()
-		}
-
-		answers = append(answers, answer)
+		answers = append(answers, a)
 	}
 
 	return answers
