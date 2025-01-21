@@ -2,6 +2,7 @@ package dnsforward
 
 import (
 	"cmp"
+	"context"
 	"net"
 	"net/netip"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/AdguardTeam/AdGuardHome/internal/filtering"
 	"github.com/AdguardTeam/dnsproxy/proxy"
 	"github.com/AdguardTeam/dnsproxy/upstream"
+	"github.com/AdguardTeam/golibs/logutil/slogutil"
 	"github.com/AdguardTeam/golibs/netutil"
 	"github.com/AdguardTeam/golibs/testutil"
 	"github.com/AdguardTeam/urlfilter/rules"
@@ -89,7 +91,7 @@ func TestServer_ProcessInitial(t *testing.T) {
 
 			var gotAddr netip.Addr
 			s.addrProc = &aghtest.AddressProcessor{
-				OnProcess: func(ip netip.Addr) { gotAddr = ip },
+				OnProcess: func(ctx context.Context, ip netip.Addr) { gotAddr = ip },
 				OnClose:   func() (err error) { panic("not implemented") },
 			}
 
@@ -430,6 +432,7 @@ func TestServer_ProcessDHCPHosts_localRestriction(t *testing.T) {
 				dnsFilter:         createTestDNSFilter(t),
 				dhcpServer:        dhcp,
 				localDomainSuffix: localDomainSuffix,
+				baseLogger:        slogutil.NewDiscardLogger(),
 			}
 
 			req := &dns.Msg{
@@ -565,6 +568,7 @@ func TestServer_ProcessDHCPHosts(t *testing.T) {
 			dnsFilter:         createTestDNSFilter(t),
 			dhcpServer:        testDHCP,
 			localDomainSuffix: tc.suffix,
+			baseLogger:        slogutil.NewDiscardLogger(),
 		}
 
 		req := &dns.Msg{

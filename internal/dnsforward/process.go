@@ -2,6 +2,7 @@ package dnsforward
 
 import (
 	"cmp"
+	"context"
 	"encoding/binary"
 	"net"
 	"net/netip"
@@ -159,7 +160,7 @@ func (s *Server) processInitial(dctx *dnsContext) (rc resultCode) {
 	q := pctx.Req.Question[0]
 	qt := q.Qtype
 	if s.conf.AAAADisabled && qt == dns.TypeAAAA {
-		_ = proxy.CheckDisabledAAAARequest(pctx, true)
+		pctx.Res = s.NewMsgNODATA(pctx.Req)
 
 		return resultCodeFinish
 	}
@@ -203,7 +204,8 @@ func (s *Server) processClientIP(addr netip.Addr) {
 	s.serverLock.RLock()
 	defer s.serverLock.RUnlock()
 
-	s.addrProc.Process(addr)
+	// TODO(s.chzhen):  Pass context.
+	s.addrProc.Process(context.TODO(), addr)
 }
 
 // processDDRQuery responds to Discovery of Designated Resolvers (DDR) SVCB

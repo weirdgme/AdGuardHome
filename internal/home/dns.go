@@ -1,7 +1,9 @@
 package home
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/netip"
 	"net/url"
@@ -19,7 +21,9 @@ import (
 	"github.com/AdguardTeam/AdGuardHome/internal/stats"
 	"github.com/AdguardTeam/golibs/errors"
 	"github.com/AdguardTeam/golibs/log"
+	"github.com/AdguardTeam/golibs/logutil/slogutil"
 	"github.com/AdguardTeam/golibs/netutil"
+	"github.com/AdguardTeam/golibs/netutil/urlutil"
 	"github.com/ameshkov/dnscrypt/v2"
 	yaml "gopkg.in/yaml.v3"
 )
@@ -43,18 +47,14 @@ func onConfigModified() {
 
 // initDNS updates all the fields of the [Context] needed to initialize the DNS
 // server and initializes it at last.  It also must not be called unless
-// [config] and [Context] are initialized.
-func initDNS() (err error) {
+// [config] and [Context] are initialized.  baseLogger must not be nil.
+func initDNS(baseLogger *slog.Logger, statsDir, querylogDir string) (err error) {
 	anonymizer := config.anonymizer()
 
-	statsDir, querylogDir, err := checkStatsAndQuerylogDirs(&Context, config)
-	if err != nil {
-		return err
-	}
-
 	statsConf := stats.Config{
+		Logger:            baseLogger.With(slogutil.KeyPrefix, "stats"),
 		Filename:          filepath.Join(statsDir, "stats.db"),
-		Limit:             config.Stats.Interval.Duration,
+		Limit:             time.Duration(config.Stats.Interval),
 		ConfigModified:    onConfigModified,
 		HTTPRegister:      httpRegister,
 		Enabled:           config.Stats.Enabled,
@@ -73,13 +73,14 @@ func initDNS() (err error) {
 	}
 
 	conf := querylog.Config{
+		Logger:            baseLogger.With(slogutil.KeyPrefix, "querylog"),
 		Anonymizer:        anonymizer,
 		ConfigModified:    onConfigModified,
 		HTTPRegister:      httpRegister,
 		FindClient:        Context.clients.findMultiple,
 		BaseDir:           querylogDir,
 		AnonymizeClientIP: config.DNS.AnonymizeClientIP,
-		RotationIvl:       config.QueryLog.Interval.Duration,
+		RotationIvl:       time.Duration(config.QueryLog.Interval),
 		MemSize:           config.QueryLog.MemSize,
 		Enabled:           config.QueryLog.Enabled,
 		FileEnabled:       config.QueryLog.FileEnabled,
@@ -113,13 +114,16 @@ func initDNS() (err error) {
 		anonymizer,
 		httpRegister,
 		tlsConf,
+		baseLogger,
 	)
 }
 
 // initDNSServer initializes the [context.dnsServer].  To only use the internal
-// proxy, none of the arguments are required, but tlsConf still must not be nil,
-// in other cases all the arguments also must not be nil.  It also must not be
-// called unless [config] and [Context] are initialized.
+// proxy, none of the arguments are required, but tlsConf and l still must not
+// be nil, in other cases all the arguments also must not be nil.  It also must
+// not be called unless [config] and [Context] are initialized.
+//
+// TODO(e.burkov): Use [dnsforward.DNSCreateParams] as a parameter.
 func initDNSServer(
 	filters *filtering.DNSFilter,
 	sts stats.Interface,
@@ -128,8 +132,10 @@ func initDNSServer(
 	anonymizer *aghnet.IPMut,
 	httpReg aghhttp.RegisterFunc,
 	tlsConf *tlsConfigSettings,
+	l *slog.Logger,
 ) (err error) {
 	Context.dnsServer, err = dnsforward.NewServer(dnsforward.DNSCreateParams{
+		Logger:      l,
 		DNSFilter:   filters,
 		Stats:       sts,
 		QueryLog:    qlog,
@@ -237,7 +243,7 @@ func newServerConfig(
 		Config:                 fwdConf,
 		TLSConfig:              newDNSTLSConfig(tlsConf, hosts),
 		TLSAllowUnencryptedDoH: tlsConf.AllowUnencryptedDoH,
-		UpstreamTimeout:        dnsConf.UpstreamTimeout.Duration,
+		UpstreamTimeout:        time.Duration(dnsConf.UpstreamTimeout),
 		TLSv12Roots:            Context.tlsRoots,
 		ConfigModified:         onConfigModified,
 		HTTPRegister:           httpReg,
@@ -367,7 +373,7 @@ func getDNSEncryption() (de dnsEncryption) {
 		}
 
 		de.https = (&url.URL{
-			Scheme: "https",
+			Scheme: urlutil.SchemeHTTPS,
 			Host:   addr,
 			Path:   "/dns-query",
 		}).String()
@@ -406,9 +412,9 @@ func applyAdditionalFiltering(clientIP netip.Addr, clientID string, setts *filte
 
 	setts.ClientIP = clientIP
 
-	c, ok := Context.clients.find(clientID)
+	c, ok := Context.clients.storage.Find(clientID)
 	if !ok {
-		c, ok = Context.clients.find(clientIP.String())
+		c, ok = Context.clients.storage.Find(clientIP.String())
 		if !ok {
 			log.Debug("%s: no clients with ip %s and clientid %q", pref, clientIP, clientID)
 
@@ -451,16 +457,25 @@ func startDNSServer() error {
 
 	Context.filters.EnableFilters(false)
 
-	Context.clients.Start()
-
-	err := Context.dnsServer.Start()
+	// TODO(s.chzhen):  Pass context.
+	ctx := context.TODO()
+	err := Context.clients.Start(ctx)
 	if err != nil {
-		return fmt.Errorf("couldn't start forwarding DNS server: %w", err)
+		return fmt.Errorf("starting clients container: %w", err)
+	}
+
+	err = Context.dnsServer.Start()
+	if err != nil {
+		return fmt.Errorf("starting dns server: %w", err)
 	}
 
 	Context.filters.Start()
 	Context.stats.Start()
-	Context.queryLog.Start()
+
+	err = Context.queryLog.Start(ctx)
+	if err != nil {
+		return fmt.Errorf("starting query log: %w", err)
+	}
 
 	return nil
 }
@@ -492,7 +507,7 @@ func stopDNSServer() (err error) {
 		return fmt.Errorf("stopping forwarding dns server: %w", err)
 	}
 
-	err = Context.clients.close()
+	err = Context.clients.close(context.TODO())
 	if err != nil {
 		return fmt.Errorf("closing clients container: %w", err)
 	}
@@ -516,12 +531,16 @@ func closeDNSServer() {
 	if Context.stats != nil {
 		err := Context.stats.Close()
 		if err != nil {
-			log.Debug("closing stats: %s", err)
+			log.Error("closing stats: %s", err)
 		}
 	}
 
 	if Context.queryLog != nil {
-		Context.queryLog.Close()
+		// TODO(s.chzhen):  Pass context.
+		err := Context.queryLog.Shutdown(context.TODO())
+		if err != nil {
+			log.Error("closing query log: %s", err)
+		}
 	}
 
 	log.Debug("all dns modules are closed")

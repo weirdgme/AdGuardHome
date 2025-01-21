@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -27,6 +28,7 @@ import (
 	"github.com/AdguardTeam/golibs/cache"
 	"github.com/AdguardTeam/golibs/errors"
 	"github.com/AdguardTeam/golibs/log"
+	"github.com/AdguardTeam/golibs/logutil/slogutil"
 	"github.com/AdguardTeam/golibs/netutil"
 	"github.com/AdguardTeam/golibs/netutil/sysresolv"
 	"github.com/AdguardTeam/golibs/stringutil"
@@ -121,12 +123,17 @@ type Server struct {
 	// access drops disallowed clients.
 	access *accessManager
 
+	// baseLogger is used to create loggers for other entities.  It should not
+	// have a prefix and must not be nil.
+	baseLogger *slog.Logger
+
 	// localDomainSuffix is the suffix used to detect internal hosts.  It
 	// must be a valid domain name plus dots on each side.
 	localDomainSuffix string
 
-	// ipset processes DNS requests using ipset data.
-	ipset ipsetCtx
+	// ipset processes DNS requests using ipset data.  It must not be nil after
+	// initialization.  See [newIpsetHandler].
+	ipset *ipsetHandler
 
 	// privateNets is the configured set of IP networks considered private.
 	privateNets netutil.SubnetSet
@@ -197,6 +204,10 @@ type DNSCreateParams struct {
 	PrivateNets netutil.SubnetSet
 	Anonymizer  *aghnet.IPMut
 	EtcHosts    *aghnet.HostsContainer
+
+	// Logger is used as a base logger.  It must not be nil.
+	Logger *slog.Logger
+
 	LocalDomain string
 }
 
@@ -233,6 +244,7 @@ func NewServer(p DNSCreateParams) (s *Server, err error) {
 		stats:       p.Stats,
 		queryLog:    p.QueryLog,
 		privateNets: p.PrivateNets,
+		baseLogger:  p.Logger,
 		// TODO(e.burkov):  Use some case-insensitive string comparison.
 		localDomainSuffix: strings.ToLower(localDomainSuffix),
 		etcHosts:          etcHosts,
@@ -596,9 +608,16 @@ func (s *Server) prepareLocalResolvers() (uc *proxy.UpstreamConfig, err error) {
 // the primary DNS proxy instance.  It assumes s.serverLock is locked or the
 // Server not running.
 func (s *Server) prepareInternalDNS() (err error) {
-	err = s.prepareIpsetListSettings()
+	ipsetList, err := s.prepareIpsetListSettings()
 	if err != nil {
 		return fmt.Errorf("preparing ipset settings: %w", err)
+	}
+
+	ipsetLogger := s.baseLogger.With(slogutil.KeyPrefix, "ipset")
+	s.ipset, err = newIpsetHandler(context.TODO(), ipsetLogger, ipsetList)
+	if err != nil {
+		// Don't wrap the error, because it's informative enough as is.
+		return err
 	}
 
 	bootOpts := &upstream.Options{
@@ -664,6 +683,7 @@ func (s *Server) setupAddrProc() {
 		s.addrProc = client.EmptyAddrProc{}
 	} else {
 		c := s.conf.AddrProcConf
+		c.BaseLogger = s.baseLogger
 		c.DialContext = s.DialContext
 		c.PrivateSubnets = s.privateNets
 		c.UsePrivateRDNS = s.conf.UsePrivateRDNS
@@ -707,6 +727,7 @@ func validateBlockingMode(
 func (s *Server) prepareInternalProxy() (err error) {
 	srvConf := s.conf
 	conf := &proxy.Config{
+		Logger:                    s.baseLogger.With(slogutil.KeyPrefix, "dnsproxy"),
 		CacheEnabled:              true,
 		CacheSizeBytes:            4096,
 		PrivateRDNSUpstreamConfig: srvConf.PrivateRDNSUpstreamConfig,
@@ -719,7 +740,7 @@ func (s *Server) prepareInternalProxy() (err error) {
 		MessageConstructor:        s,
 	}
 
-	err = setProxyUpstreamMode(conf, srvConf.UpstreamMode, srvConf.FastestTimeout.Duration)
+	err = setProxyUpstreamMode(conf, srvConf.UpstreamMode, time.Duration(srvConf.FastestTimeout))
 	if err != nil {
 		return fmt.Errorf("invalid upstream mode: %w", err)
 	}
@@ -734,19 +755,21 @@ func (s *Server) Stop() error {
 	s.serverLock.Lock()
 	defer s.serverLock.Unlock()
 
-	return s.stopLocked()
+	s.stopLocked()
+
+	return nil
 }
 
 // stopLocked stops the DNS server without locking.  s.serverLock is expected to
 // be locked.
-func (s *Server) stopLocked() (err error) {
+func (s *Server) stopLocked() {
 	// TODO(e.burkov, a.garipov):  Return critical errors, not just log them.
 	// This will require filtering all the non-critical errors in
 	// [upstream.Upstream] implementations.
 
 	if s.dnsProxy != nil {
 		// TODO(e.burkov):  Use context properly.
-		err = s.dnsProxy.Shutdown(context.Background())
+		err := s.dnsProxy.Shutdown(context.Background())
 		if err != nil {
 			log.Error("dnsforward: closing primary resolvers: %s", err)
 		}
@@ -757,8 +780,6 @@ func (s *Server) stopLocked() (err error) {
 	}
 
 	s.isRunning = false
-
-	return nil
 }
 
 // logCloserErr logs the error returned by c, if any.
@@ -797,6 +818,8 @@ func (s *Server) proxy() (p *proxy.Proxy) {
 }
 
 // Reconfigure applies the new configuration to the DNS server.
+//
+// TODO(a.garipov): This whole piece of API is weird and needs to be remade.
 func (s *Server) Reconfigure(conf *ServerConfig) error {
 	s.serverLock.Lock()
 	defer s.serverLock.Unlock()
@@ -804,28 +827,26 @@ func (s *Server) Reconfigure(conf *ServerConfig) error {
 	log.Info("dnsforward: starting reconfiguring server")
 	defer log.Info("dnsforward: finished reconfiguring server")
 
-	err := s.stopLocked()
-	if err != nil {
-		return fmt.Errorf("could not reconfigure the server: %w", err)
-	}
+	s.stopLocked()
 
 	// It seems that net.Listener.Close() doesn't close file descriptors right away.
 	// We wait for some time and hope that this fd will be closed.
 	time.Sleep(100 * time.Millisecond)
 
-	// TODO(a.garipov): This whole piece of API is weird and needs to be remade.
+	if s.addrProc != nil {
+		err := s.addrProc.Close()
+		if err != nil {
+			log.Error("dnsforward: closing address processor: %s", err)
+		}
+	}
+
 	if conf == nil {
 		conf = &s.conf
-	} else {
-		closeErr := s.addrProc.Close()
-		if closeErr != nil {
-			log.Error("dnsforward: closing address processor: %s", closeErr)
-		}
 	}
 
 	// TODO(e.burkov):  It seems an error here brings the server down, which is
 	// not reliable enough.
-	err = s.Prepare(conf)
+	err := s.Prepare(conf)
 	if err != nil {
 		return fmt.Errorf("could not reconfigure the server: %w", err)
 	}

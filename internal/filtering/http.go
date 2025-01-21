@@ -16,35 +16,39 @@ import (
 	"github.com/AdguardTeam/AdGuardHome/internal/filtering/rulelist"
 	"github.com/AdguardTeam/golibs/errors"
 	"github.com/AdguardTeam/golibs/log"
+	"github.com/AdguardTeam/golibs/netutil/urlutil"
 	"github.com/miekg/dns"
 )
 
 // validateFilterURL validates the filter list URL or file name.
-func validateFilterURL(urlStr string) (err error) {
+func (d *DNSFilter) validateFilterURL(urlStr string) (err error) {
 	defer func() { err = errors.Annotate(err, "checking filter: %w") }()
 
 	if filepath.IsAbs(urlStr) {
+		urlStr = filepath.Clean(urlStr)
 		_, err = os.Stat(urlStr)
+		if err != nil {
+			// Don't wrap the error since it's informative enough as is.
+			return err
+		}
 
-		// Don't wrap the error since it's informative enough as is.
-		return err
+		if !pathMatchesAny(d.safeFSPatterns, urlStr) {
+			return fmt.Errorf("path %q does not match safe patterns", urlStr)
+		}
+
+		return nil
 	}
 
 	u, err := url.ParseRequestURI(urlStr)
 	if err != nil {
-		// Don't wrap the error since it's informative enough as is.
+		// Don't wrap the error, because it's informative enough as is.
 		return err
 	}
 
-	if s := u.Scheme; s != aghhttp.SchemeHTTP && s != aghhttp.SchemeHTTPS {
-		return &url.Error{
-			Op:  "Check scheme",
-			URL: urlStr,
-			Err: fmt.Errorf("only %v allowed", []string{
-				aghhttp.SchemeHTTP,
-				aghhttp.SchemeHTTPS,
-			}),
-		}
+	err = urlutil.ValidateHTTPURL(u)
+	if err != nil {
+		// Don't wrap the error, because it's informative enough as is.
+		return err
 	}
 
 	return nil
@@ -65,7 +69,7 @@ func (d *DNSFilter) handleFilteringAddURL(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	err = validateFilterURL(fj.URL)
+	err = d.validateFilterURL(fj.URL)
 	if err != nil {
 		aghhttp.Error(r, w, http.StatusBadRequest, "%s", err)
 
@@ -225,7 +229,7 @@ func (d *DNSFilter) handleFilteringSetURL(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	err = validateFilterURL(fj.Data.URL)
+	err = d.validateFilterURL(fj.Data.URL)
 	if err != nil {
 		aghhttp.Error(r, w, http.StatusBadRequest, "invalid url: %s", err)
 
