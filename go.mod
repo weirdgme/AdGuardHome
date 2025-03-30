@@ -3,8 +3,8 @@ module github.com/AdguardTeam/AdGuardHome
 go 1.24.1
 
 require (
-	github.com/AdguardTeam/dnsproxy v0.75.1
-	github.com/AdguardTeam/golibs v0.32.5
+	github.com/AdguardTeam/dnsproxy v0.75.2
+	github.com/AdguardTeam/golibs v0.32.6
 	github.com/AdguardTeam/urlfilter v0.20.0
 	github.com/NYTimes/gziphandler v1.1.1
 	github.com/ameshkov/dnscrypt/v2 v2.3.0
@@ -28,13 +28,13 @@ require (
 	// TODO(a.garipov): This package is deprecated; find a new one or use our
 	// own code for that.  Perhaps, use gopacket.
 	github.com/mdlayher/raw v0.1.0
-	github.com/miekg/dns v1.1.63
-	github.com/quic-go/quic-go v0.49.0
+	github.com/miekg/dns v1.1.64
+	github.com/quic-go/quic-go v0.50.1
 	github.com/stretchr/testify v1.10.0
 	github.com/ti-mo/netfilter v0.5.2
 	go.etcd.io/bbolt v1.4.0
 	golang.org/x/crypto v0.36.0
-	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa
+	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394
 	golang.org/x/net v0.37.0
 	golang.org/x/sys v0.31.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
@@ -43,13 +43,13 @@ require (
 )
 
 require (
-	cloud.google.com/go v0.118.3 // indirect
-	cloud.google.com/go/ai v0.10.0 // indirect
+	cloud.google.com/go v0.120.0 // indirect
+	cloud.google.com/go/ai v0.10.1 // indirect
 	cloud.google.com/go/auth v0.15.0 // indirect
-	cloud.google.com/go/auth/oauth2adapt v0.2.7 // indirect
+	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.6.0 // indirect
-	cloud.google.com/go/longrunning v0.6.5 // indirect
-	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c // indirect
+	cloud.google.com/go/longrunning v0.6.6 // indirect
+	github.com/BurntSushi/toml v1.5.0 // indirect
 	github.com/aead/chacha20 v0.0.0-20180709150244-8b13a72661da // indirect
 	github.com/aead/poly1305 v0.0.0-20180717145839-3fee0db0b635 // indirect
 	github.com/ameshkov/dnsstamps v1.0.3 // indirect
@@ -63,16 +63,16 @@ require (
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/golangci/misspell v0.6.0 // indirect
 	github.com/google/generative-ai-go v0.19.0 // indirect
-	github.com/google/pprof v0.0.0-20250202011525-fc3143867406 // indirect
+	github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
-	github.com/googleapis/enterprise-certificate-proxy v0.3.5 // indirect
+	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/googleapis/gax-go/v2 v2.14.1 // indirect
 	github.com/gookit/color v1.5.4 // indirect
 	github.com/gordonklaus/ineffassign v0.1.0 // indirect
 	github.com/jstemmer/go-junit-report/v2 v2.1.0 // indirect
 	github.com/kisielk/errcheck v1.9.0 // indirect
 	github.com/mdlayher/socket v0.5.1 // indirect
-	github.com/onsi/ginkgo/v2 v2.22.2 // indirect
+	github.com/onsi/ginkgo/v2 v2.23.2 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
@@ -95,16 +95,16 @@ require (
 	golang.org/x/mod v0.24.0 // indirect
 	golang.org/x/oauth2 v0.28.0 // indirect
 	golang.org/x/sync v0.12.0 // indirect
-	golang.org/x/telemetry v0.0.0-20250305155315-2a181eac97a3 // indirect
+	golang.org/x/telemetry v0.0.0-20250310203348-fdfaad844314 // indirect
 	golang.org/x/term v0.30.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
 	golang.org/x/time v0.11.0 // indirect
 	golang.org/x/tools v0.31.0 // indirect
 	golang.org/x/vuln v1.1.4 // indirect
 	gonum.org/v1/gonum v0.15.1 // indirect
-	google.golang.org/api v0.224.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20250303144028-a0af3efb3deb // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20250303144028-a0af3efb3deb // indirect
+	google.golang.org/api v0.227.0 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20250313205543-e70fdf4c4cb4 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20250313205543-e70fdf4c4cb4 // indirect
 	google.golang.org/grpc v1.71.0 // indirect
 	google.golang.org/protobuf v1.36.5 // indirect
 	honnef.co/go/tools v0.6.1 // indirect
