@@ -5479,3 +5479,12 @@
 @@||mcq-ui.kodekloud.com^$important
 @@||espn.hb.omtrdc.net^$important
 @@||mcq-backend-main.kodekloud.com^$important
+@@||www.vice.com^$important
+@@||links.clearme.com^$important
+@@||help.flo.health^$important
+@@||www.pinterest.com^$important
+@@||www.mediavine.com^$important
+@@||x.com^$important
+@@||www.armytimes.com^$important
+@@||10up.com^$important
+@@||6sense.com^$important
