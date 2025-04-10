@@ -5488,3 +5488,16 @@
 @@||www.armytimes.com^$important
 @@||10up.com^$important
 @@||6sense.com^$important
+@@||livecode.awscertif.site^$important
+@@||faq.whatsapp.com^$important
+@@||news.bitcoin.com^$important
+@@||wowt.com^$important
+@@||cbssports.com^$important
+@@||cdn.clarip.com^$important
+@@||frontier-ga-c49424850.uc.r.appspot.com^$important
+@@||lensajobs.us^$important
+@@||careers.mcafee.com^$important
+@@||mcafee.com^$important
+@@||m.legendz.com^$important
+@@||sports.yahoo.com^$important
+@@||abs.twimg.com^$important
