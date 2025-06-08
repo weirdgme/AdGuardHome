@@ -9,17 +9,63 @@ The format is based on [*Keep a Changelog*](https://keepachangelog.com/en/1.0.0/
 <!--
 ## [v0.108.0] – TBA
 
-## [v0.107.61] - 2025-04-22 (APPROX.)
+## [v0.107.63] - 2025-06-15 (APPROX.)
 
-See also the [v0.107.61 GitHub milestone][ms-v0.107.61].
+See also the [v0.107.63 GitHub milestone][ms-v0.107.63].
 
-[ms-v0.107.61]: https://github.com/AdguardTeam/AdGuardHome/milestone/96?closed=1
+[ms-v0.107.63]: https://github.com/AdguardTeam/AdGuardHome/milestone/98?closed=1
 
 NOTE: Add new changes BELOW THIS COMMENT.
 -->
+
+### Fixed
+
+- The hostnames of DHCP clients with multiple labels not being recognized.
+
+- Status reported by the systemd service implementation in cases of auto-restart after a failed start.
+
 <!--
 NOTE: Add new changes ABOVE THIS COMMENT.
 -->
+
+## [v0.107.62] - 2025-05-27
+
+See also the [v0.107.62 GitHub milestone][ms-v0.107.62].
+
+### Security
+
+- Go version has been updated to prevent the possibility of exploiting the Go vulnerabilities fixed in [1.24.3][go-1.24.3].
+
+### Fixed
+
+- Clients with CIDR identifiers showing zero requests on the *Settings → Client settings* page ([#2945]).
+
+- Command line option `--update` when the `dns.serve_plain_dns` configuration property was disabled ([#7801]).
+
+- DNS cache not working for custom upstream configurations.
+
+- Validation process for the DNS-over-TLS, DNS-over-QUIC, and HTTPS ports on the *Encryption Settings* page.
+
+- Searching for persistent clients using an exact match for CIDR in the `POST /clients/search` HTTP API.
+
+[#2945]: https://github.com/AdguardTeam/AdGuardHome/issues/2945
+[#7801]: https://github.com/AdguardTeam/AdGuardHome/issues/7801
+
+[go-1.24.3]: https://groups.google.com/g/golang-announce/c/UZoIkUT367A
+[ms-v0.107.62]: https://github.com/AdguardTeam/AdGuardHome/milestone/97?closed=1
+
+## [v0.107.61] - 2025-04-22
+
+See also the [v0.107.61 GitHub milestone][ms-v0.107.61].
+
+### Security
+
+- Any simultaneous requests that are considered duplicates will now only result in a single request to upstreams, reducing the chance of a cache poisoning attack succeeding.  This is controlled by the new configuration object `pending_requests`, which has a single `enabled` property, set to `true` by default.
+
+    **NOTE:** We thank [Xiang Li][mr-xiang-li] for reporting this security issue.  It's strongly recommended to leave it enabled, otherwise AdGuard Home will be vulnerable to untrusted clients.
+
+[mr-xiang-li]:  https://lixiang521.com/
+[ms-v0.107.61]: https://github.com/AdguardTeam/AdGuardHome/milestone/96?closed=1
 
 ## [v0.107.60] - 2025-04-14
 
@@ -55,14 +101,12 @@ See also the [v0.107.60 GitHub milestone][ms-v0.107.60].
 [#7729]: https://github.com/AdguardTeam/AdGuardHome/issues/7729
 [#7734]: https://github.com/AdguardTeam/AdGuardHome/issues/7734
 
-[go-1.24.2]: https://groups.google.com/g/golang-announce/c/Y2uBTVKjBQk
+[go-1.24.2]:    https://groups.google.com/g/golang-announce/c/Y2uBTVKjBQk
 [ms-v0.107.60]: https://github.com/AdguardTeam/AdGuardHome/milestone/95?closed=1
 
 ## [v0.107.59] - 2025-03-21
 
 See also the [v0.107.59 GitHub milestone][ms-v0.107.59].
-
-### Fixed
 
 - Rules with the `client` modifier not working ([#7708]).
 
@@ -2790,7 +2834,7 @@ See also the [v0.106.0 GitHub milestone][ms-v0.106.0].
 
 - Quality of logging ([#2954]).
 
-- Normalization of hostnames sent by DHCP clients ([#2945], [#2952]).
+- Normalization of hostnames sent by DHCP clients ([#2946], [#2952]).
 
 - The access to the private hosts is now forbidden for users from external networks ([#2889]).
 
@@ -2850,7 +2894,7 @@ See also the [v0.106.0 GitHub milestone][ms-v0.106.0].
 [#2923]: https://github.com/AdguardTeam/AdGuardHome/issues/2923
 [#2927]: https://github.com/AdguardTeam/AdGuardHome/issues/2927
 [#2934]: https://github.com/AdguardTeam/AdGuardHome/issues/2934
-[#2945]: https://github.com/AdguardTeam/AdGuardHome/issues/2945
+[#2946]: https://github.com/AdguardTeam/AdGuardHome/issues/2946
 [#2947]: https://github.com/AdguardTeam/AdGuardHome/issues/2947
 [#2952]: https://github.com/AdguardTeam/AdGuardHome/issues/2952
 [#2954]: https://github.com/AdguardTeam/AdGuardHome/issues/2954
@@ -3104,11 +3148,13 @@ See also the [v0.104.2 GitHub milestone][ms-v0.104.2].
 [ms-v0.104.2]: https://github.com/AdguardTeam/AdGuardHome/milestone/28?closed=1
 
 <!--
-[Unreleased]: https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.61...HEAD
-[v0.107.61]:  https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.60...v0.107.61
+[Unreleased]: https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.63...HEAD
+[v0.107.63]:  https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.62...v0.107.63
 -->
 
-[Unreleased]: https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.60...HEAD
+[Unreleased]: https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.62...HEAD
+[v0.107.62]:  https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.61...v0.107.62
+[v0.107.61]:  https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.60...v0.107.61
 [v0.107.60]:  https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.59...v0.107.60
 [v0.107.59]:  https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.58...v0.107.59
 [v0.107.58]:  https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.57...v0.107.58
