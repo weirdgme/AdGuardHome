@@ -111,7 +111,6 @@ func TestValidateCertificates(t *testing.T) {
 // restores them once the test is complete.
 //
 // The global variables are:
-//   - [GLMode]
 //   - [config]
 //   - [glFilePrefix]
 //   - [globalContext.auth]
@@ -126,10 +125,8 @@ func TestValidateCertificates(t *testing.T) {
 func storeGlobals(tb testing.TB) {
 	tb.Helper()
 
-	prevGLMode := GLMode
 	prevConfig := config
 	prefGLFilePrefix := glFilePrefix
-	auth := globalContext.auth
 	storage := globalContext.clients.storage
 	dnsServer := globalContext.dnsServer
 	firstRun := globalContext.firstRun
@@ -137,10 +134,8 @@ func storeGlobals(tb testing.TB) {
 	web := globalContext.web
 
 	tb.Cleanup(func() {
-		GLMode = prevGLMode
 		config = prevConfig
 		glFilePrefix = prefGLFilePrefix
-		globalContext.auth = auth
 		globalContext.clients.storage = storage
 		globalContext.dnsServer = dnsServer
 		globalContext.firstRun = firstRun
@@ -230,8 +225,9 @@ func TestTLSManager_Reload(t *testing.T) {
 	require.NoError(t, err)
 
 	globalContext.clients.storage, err = client.NewStorage(ctx, &client.StorageConfig{
-		Logger: testLogger,
-		Clock:  timeutil.SystemClock{},
+		BaseLogger: testLogger,
+		Logger:     testLogger,
+		Clock:      timeutil.SystemClock{},
 	})
 	require.NoError(t, err)
 
@@ -261,7 +257,7 @@ func TestTLSManager_Reload(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	web, err := initWeb(ctx, options{}, nil, nil, testLogger, nil, false)
+	web, err := initWeb(ctx, options{}, nil, nil, testLogger, nil, nil, false)
 	require.NoError(t, err)
 
 	m.setWebAPI(web)
@@ -331,7 +327,7 @@ func TestValidateTLSSettings(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	web, err := initWeb(ctx, options{}, nil, nil, testLogger, nil, false)
+	web, err := initWeb(ctx, options{}, nil, nil, testLogger, nil, nil, false)
 	require.NoError(t, err)
 
 	m.setWebAPI(web)
@@ -435,7 +431,7 @@ func TestTLSManager_HandleTLSValidate(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	web, err := initWeb(ctx, options{}, nil, nil, testLogger, nil, false)
+	web, err := initWeb(ctx, options{}, nil, nil, testLogger, nil, nil, false)
 	require.NoError(t, err)
 
 	m.setWebAPI(web)
@@ -492,8 +488,9 @@ func TestTLSManager_HandleTLSConfigure(t *testing.T) {
 	require.NoError(t, err)
 
 	globalContext.clients.storage, err = client.NewStorage(ctx, &client.StorageConfig{
-		Logger: testLogger,
-		Clock:  timeutil.SystemClock{},
+		BaseLogger: testLogger,
+		Logger:     testLogger,
+		Clock:      timeutil.SystemClock{},
 	})
 	require.NoError(t, err)
 
@@ -525,7 +522,7 @@ func TestTLSManager_HandleTLSConfigure(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	web, err := initWeb(ctx, options{}, nil, nil, testLogger, nil, false)
+	web, err := initWeb(ctx, options{}, nil, nil, testLogger, nil, nil, false)
 	require.NoError(t, err)
 
 	m.setWebAPI(web)

@@ -9,14 +9,40 @@ The format is based on [*Keep a Changelog*](https://keepachangelog.com/en/1.0.0/
 <!--
 ## [v0.108.0] – TBA
 
-## [v0.107.63] - 2025-06-15 (APPROX.)
+## [v0.107.64] - 2025-07-15 (APPROX.)
 
-See also the [v0.107.63 GitHub milestone][ms-v0.107.63].
+See also the [v0.107.64 GitHub milestone][ms-v0.107.64].
 
-[ms-v0.107.63]: https://github.com/AdguardTeam/AdGuardHome/milestone/98?closed=1
+[ms-v0.107.64]: https://github.com/AdguardTeam/AdGuardHome/milestone/99?closed=1
 
 NOTE: Add new changes BELOW THIS COMMENT.
 -->
+
+### Security
+
+- Go version has been updated to prevent the possibility of exploiting the Go vulnerabilities fixed in [1.24.5][go-1.24.5].
+
+### Fixed
+
+- TTL override calculation ([#7903]).
+- Validation process for DNSCrypt settings ([#7856]).
+
+[#7856]: https://github.com/AdguardTeam/AdGuardHome/issues/7856
+[#7903]: https://github.com/AdguardTeam/AdGuardHome/issues/7903
+
+[go-1.24.5]: https://groups.google.com/g/golang-announce/c/gTNJnDXmn34
+
+<!--
+NOTE: Add new changes ABOVE THIS COMMENT.
+-->
+
+## [v0.107.63] - 2025-06-26
+
+See also the [v0.107.63 GitHub milestone][ms-v0.107.63].
+
+### Security
+
+- Go version has been updated to prevent the possibility of exploiting the Go vulnerabilities fixed in [1.24.4][go-1.24.4].
 
 ### Fixed
 
@@ -24,9 +50,8 @@ NOTE: Add new changes BELOW THIS COMMENT.
 
 - Status reported by the systemd service implementation in cases of auto-restart after a failed start.
 
-<!--
-NOTE: Add new changes ABOVE THIS COMMENT.
--->
+[go-1.24.4]: https://groups.google.com/g/golang-announce/c/ufZ8WpEsA3A
+[ms-v0.107.63]: https://github.com/AdguardTeam/AdGuardHome/milestone/98?closed=1
 
 ## [v0.107.62] - 2025-05-27
 
@@ -3148,11 +3173,12 @@ See also the [v0.104.2 GitHub milestone][ms-v0.104.2].
 [ms-v0.104.2]: https://github.com/AdguardTeam/AdGuardHome/milestone/28?closed=1
 
 <!--
-[Unreleased]: https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.63...HEAD
-[v0.107.63]:  https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.62...v0.107.63
+[Unreleased]: https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.64...HEAD
+[v0.107.64]:  https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.63...v0.107.64
 -->
 
-[Unreleased]: https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.62...HEAD
+[Unreleased]: https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.63...HEAD
+[v0.107.63]:  https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.62...v0.107.63
 [v0.107.62]:  https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.61...v0.107.62
 [v0.107.61]:  https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.60...v0.107.61
 [v0.107.60]:  https://github.com/AdguardTeam/AdGuardHome/compare/v0.107.59...v0.107.60
