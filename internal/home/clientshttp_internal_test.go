@@ -85,11 +85,10 @@ func assertClients(tb testing.TB, want, got []*client.Persistent) {
 	slices.SortFunc(want, sortFunc)
 	slices.SortFunc(got, sortFunc)
 
-	slices.CompareFunc(want, got, func(a, b *client.Persistent) (n int) {
-		assert.True(tb, a.EqualIDs(b), "%q doesn't have the same ids as %q", a.Name, b.Name)
-
-		return 0
-	})
+	for i, a := range want {
+		b := got[i]
+		assert.Truef(tb, a.EqualIDs(b), "%q doesn't have the same ids as %q", a.Name, b.Name)
+	}
 }
 
 // assertPersistentClients is a helper function that uses HTTP API to check
@@ -421,7 +420,6 @@ func TestClientsContainer_HandleSearchClient(t *testing.T) {
 		allowed     = false
 		dissallowed = true
 
-		emptyRule      = ""
 		disallowedRule = "disallowed_rule"
 	)
 
@@ -432,7 +430,7 @@ func TestClientsContainer_HandleSearchClient(t *testing.T) {
 				return true, disallowedRule
 			}
 
-			return false, emptyRule
+			return false, ""
 		},
 	}
 
@@ -481,11 +479,10 @@ func TestClientsContainer_HandleSearchClient(t *testing.T) {
 			}},
 		},
 		wantRuntime: &clientJSON{
-			Name:           runtimeCli,
-			IDs:            []string{runtimeCliIP},
-			Disallowed:     &allowed,
-			DisallowedRule: &emptyRule,
-			WHOIS:          &whois.Info{},
+			Name:       runtimeCli,
+			IDs:        []string{runtimeCliIP},
+			Disallowed: &allowed,
+			WHOIS:      &whois.Info{},
 		},
 	}, {
 		name: "blocked_access",
@@ -508,10 +505,9 @@ func TestClientsContainer_HandleSearchClient(t *testing.T) {
 			}},
 		},
 		wantRuntime: &clientJSON{
-			IDs:            []string{nonExistentCliIP},
-			Disallowed:     &allowed,
-			DisallowedRule: &emptyRule,
-			WHOIS:          &whois.Info{},
+			IDs:        []string{nonExistentCliIP},
+			Disallowed: &allowed,
+			WHOIS:      &whois.Info{},
 		},
 	}}
 

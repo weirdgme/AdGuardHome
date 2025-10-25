@@ -8,6 +8,12 @@ type blockedService struct {
 	Name    string   `json:"name"`
 	IconSVG []byte   `json:"icon_svg"`
 	Rules   []string `json:"rules"`
+	GroupID string   `json:"group_id"`
+}
+
+// serviceGroup represents single group of services.
+type serviceGroup struct {
+	ID string `json:"id"`
 }
 
 // blockedServices contains raw blocked service data.
@@ -20,6 +26,7 @@ var blockedServices = []blockedService{{
 		"||4chan.org^",
 		"||4channel.org^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "500px",
 	Name:    "500px",
@@ -28,6 +35,7 @@ var blockedServices = []blockedService{{
 		"||500px.com^",
 		"||500px.org^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "9gag",
 	Name:    "9GAG",
@@ -36,6 +44,7 @@ var blockedServices = []blockedService{{
 		"||9cache.com^",
 		"||9gag.com^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "activision_blizzard",
 	Name:    "Activision Blizzard",
@@ -48,6 +57,7 @@ var blockedServices = []blockedService{{
 		"||codmwest.com^",
 		"||demonware.net^",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "aliexpress",
 	Name:    "AliExpress",
@@ -58,6 +68,7 @@ var blockedServices = []blockedService{{
 		"||aliexpress.com^",
 		"||aliexpress.ru^",
 	},
+	GroupID: "shopping",
 }, {
 	ID:      "amazon",
 	Name:    "Amazon",
@@ -265,6 +276,7 @@ var blockedServices = []blockedService{{
 		"||z.cn^",
 		"||zappos^",
 	},
+	GroupID: "shopping",
 }, {
 	ID:      "amazon_streaming",
 	Name:    "Amazon Streaming",
@@ -300,6 +312,7 @@ var blockedServices = []blockedService{{
 		"||primevideo.tv^",
 		"||video.a2z.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "amino",
 	Name:    "Amino",
@@ -307,6 +320,7 @@ var blockedServices = []blockedService{{
 	Rules: []string{
 		"||aminoapps.com^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "apple_streaming",
 	Name:    "Apple Streaming",
@@ -331,6 +345,7 @@ var blockedServices = []blockedService{{
 		"||tv.g.apple.com^",
 		"||tv.v.aaplimg.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "battle_net",
 	Name:    "Battle.net",
@@ -341,6 +356,7 @@ var blockedServices = []blockedService{{
 		"||bnet.163.com^",
 		"||bnet.cn^",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "betano",
 	Name:    "Betano",
@@ -354,6 +370,7 @@ var blockedServices = []blockedService{{
 		"||betano.ng^",
 		"||betano.pt^",
 	},
+	GroupID: "gambling",
 }, {
 	ID:      "betfair",
 	Name:    "Betfair",
@@ -366,6 +383,7 @@ var blockedServices = []blockedService{{
 		"||betfair.ro^",
 		"||betfair.se^",
 	},
+	GroupID: "gambling",
 }, {
 	ID:      "betway",
 	Name:    "Betway",
@@ -388,6 +406,7 @@ var blockedServices = []blockedService{{
 		"||betwaysatta.com^",
 		"||vietnambetway88.com^",
 	},
+	GroupID: "gambling",
 }, {
 	ID:      "bigo_live",
 	Name:    "Bigo Live",
@@ -398,6 +417,7 @@ var blockedServices = []blockedService{{
 		"||bigolive.tv^",
 		"||bigovideo.tv^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "bilibili",
 	Name:    "Bilibili",
@@ -450,6 +470,7 @@ var blockedServices = []blockedService{{
 		"||mincdn.com^",
 		"||yo9.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "blaze",
 	Name:    "Blaze",
@@ -460,6 +481,7 @@ var blockedServices = []blockedService{{
 		"||blaze.com^",
 		"||blazecareers.com^",
 	},
+	GroupID: "gambling",
 }, {
 	ID:      "blizzard_entertainment",
 	Name:    "Blizzard Entertainment",
@@ -475,6 +497,7 @@ var blockedServices = []blockedService{{
 		"||bnet.163.com^",
 		"||bnet.cn^",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "bluesky",
 	Name:    "Bluesky",
@@ -483,6 +506,7 @@ var blockedServices = []blockedService{{
 		"||bsky.app^",
 		"||bsky.social^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "box",
 	Name:    "Box",
@@ -493,6 +517,7 @@ var blockedServices = []blockedService{{
 		"||boxcdn.net^",
 		"||boxcloud.com^",
 	},
+	GroupID: "hosting",
 }, {
 	ID:      "canais_globo",
 	Name:    "Canais Globo",
@@ -502,6 +527,18 @@ var blockedServices = []blockedService{{
 		"||globosat.globo.com^",
 		"||gsatmulti.globo.com^",
 	},
+	GroupID: "streaming",
+}, {
+	ID:      "chatgpt",
+	Name:    "ChatGPT",
+	IconSVG: []byte("<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"currentColor\" viewBox=\"0 0 50 50\"><path d=\"M45.403 25.562c-.506-1.89-1.518-3.553-2.906-4.862 1.134-2.665.963-5.724-.487-8.237-1.391-2.408-3.636-4.131-6.322-4.851-1.891-.506-3.839-.462-5.669.088C28.276 5.382 25.562 4 22.647 4c-4.906 0-9.021 3.416-10.116 7.991-.01.001-.019-.003-.029-.002-2.902.36-5.404 2.019-6.865 4.549-1.391 2.408-1.76 5.214-1.04 7.9.507 1.891 1.519 3.556 2.909 4.865-1.134 2.666-.97 5.714.484 8.234 1.391 2.408 3.636 4.131 6.322 4.851.896.24 1.807.359 2.711.359 1.003 0 1.995-.161 2.957-.45C21.722 44.619 24.425 46 27.353 46c4.911 0 9.028-3.422 10.12-8.003 2.88-.35 5.431-2.006 6.891-4.535 1.39-2.408 1.759-5.214 1.039-7.9zM35.17 9.543c2.171.581 3.984 1.974 5.107 3.919 1.049 1.817 1.243 4 .569 5.967-.099-.062-.193-.131-.294-.19l-9.169-5.294a1.0072 1.0072 0 0 0-1.01.006l-10.198 6.041-.052-4.607 8.663-5.001C30.733 9.26 33 8.963 35.17 9.543zm-5.433 12.652.062 5.504-4.736 2.805-4.799-2.699-.062-5.504 4.736-2.805 4.799 2.699zm-15.502-7.783C14.235 9.773 18.009 6 22.647 6c2.109 0 4.092.916 5.458 2.488-.105.056-.214.103-.318.163l-9.17 5.294c-.312.181-.504.517-.5.877l.133 11.851-4.015-2.258V14.412zm-7.707 9.509c-.581-2.17-.282-4.438.841-6.383 1.06-1.836 2.823-3.074 4.884-3.474-.004.116-.018.23-.018.348V25c0 .361.195.694.51.872l10.329 5.81-3.964 2.348-8.662-5.002c-1.946-1.123-3.338-2.936-3.92-5.107zm8.302 16.536c-2.171-.581-3.984-1.974-5.107-3.919-1.053-1.824-1.249-4.001-.573-5.97.101.063.196.133.299.193l9.169 5.294a.9998.9998 0 0 0 1.01-.006l10.198-6.041.052 4.607-8.663 5.001c-1.946 1.125-4.214 1.424-6.385.841zm20.935-4.869c0 4.639-3.773 8.412-8.412 8.412-2.119 0-4.094-.919-5.459-2.494.105-.056.216-.098.32-.158l9.17-5.294c.312-.181.504-.517.5-.877l-.134-11.85 4.015 2.258v10.003zm6.866-3.126c-1.056 1.83-2.84 3.086-4.884 3.483.004-.12.018-.237.018-.357V25c0-.361-.195-.694-.51-.872l-10.329-5.81 3.964-2.348 8.662 5.002c1.946 1.123 3.338 2.937 3.92 5.107.581 2.17.282 4.438-.841 6.383z\"/></svg>"),
+	Rules: []string{
+		"||chatgpt.com^",
+		"||oaistatic.com^",
+		"||oaiusercontent.com^",
+		"||openai.com^",
+	},
+	GroupID: "ai",
 }, {
 	ID:      "claro",
 	Name:    "Claro",
@@ -530,6 +567,16 @@ var blockedServices = []blockedService{{
 		"||clarovideo.com^",
 		"||usclaro.com^",
 	},
+	GroupID: "streaming",
+}, {
+	ID:      "claude",
+	Name:    "Claude",
+	IconSVG: []byte("<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"currentColor\" viewBox=\"0 0 40 40\"><path d=\"m7.8 26.3 7.7-4.4.1-.4v-.2h-1.8L9.4 21H5.5l-3.7-.2-1-.2-.8-1.2v-.6l.9-.5H2l2.5.3 3.8.2 2.7.2 4 .4h.7v-.3l-.2-.1-.1-.2-4-2.6-4.1-2.8L5 11.8 3.9 11l-.6-.8L3 8.6l1.1-1.2h1.4l.4.2 1.5 1.1 3.1 2.4 4.1 3 .6.6.3-.2v-.1l-.3-.5-2.2-4-2.4-4.1-1-1.7-.3-1A4.9 4.9 0 0 1 9 1.9L10.3.2 11 0l1.7.2.7.6 1 2.3L16 6.8l2.6 5 .7 1.5.4 1.4.2.4h.2v-.3l.2-2.8.4-3.4.4-4.5.1-1.2.7-1.5L23 .6l1 .4.8 1.2-.2.7-.4 3-1 4.8-.5 3.2h.3l.4-.4 1.6-2.1L27.8 8 29 6.6l1.4-1.5 1-.7H33l1.3 1.9-.6 1.9-1.7 2.2-1.5 1.9-2 2.8-1.4 2.2.2.2h.3l4.7-1 2.5-.5 3-.5 1.4.6.2.7-.6 1.3-3.2.8-3.8.8L26 21v.2l2.6.2h3.7l5 .4 1.3 1 .8 1-.1.8-2 1-2.7-.7-6.3-1.5-2.2-.5H26v.2l1.8 1.7 3.3 3 4.1 3.9.2 1-.5.7-.5-.1-3.7-2.7-1.4-1.3-3.1-2.7h-.3v.3l.8 1.1 3.8 5.8.2 1.8-.2.6-1 .3-1.1-.2-2.3-3.2-2.3-3.5-2-3.2-.1.1-1.1 12-.6.6-1.2.4-1-.7-.5-1.3.5-2.4.7-3.2.5-2.5.5-3.1.2-1v-.1h-.2L17 28.4l-3.6 4.9-2.8 3-.7.3-1.2-.6.2-1.1.6-1 4-5 2.3-3 1.5-1.9v-.2L6.7 30.6l-1.9.2L4 30l.1-1.2.4-.4 3.2-2.1Z\"/></svg>"),
+	Rules: []string{
+		"||anthropic.com^",
+		"||claude.ai^",
+	},
+	GroupID: "ai",
 }, {
 	ID:      "cloudflare",
 	Name:    "Cloudflare",
@@ -566,6 +613,7 @@ var blockedServices = []blockedService{{
 		"||warp.plus^",
 		"||workers.dev^",
 	},
+	GroupID: "cdn",
 }, {
 	ID:      "clubhouse",
 	Name:    "Clubhouse",
@@ -574,6 +622,7 @@ var blockedServices = []blockedService{{
 		"||clubhouse.com^",
 		"||clubhouseapi.com^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "coolapk",
 	Name:    "CoolApk",
@@ -583,6 +632,7 @@ var blockedServices = []blockedService{{
 		"||coolapkmarket.com^",
 		"||coolapkmarket.net^",
 	},
+	GroupID: "shopping",
 }, {
 	ID:      "crunchyroll",
 	Name:    "Crunchyroll",
@@ -591,6 +641,7 @@ var blockedServices = []blockedService{{
 		"||crunchyroll.com^",
 		"||gccrunchyroll.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "dailymotion",
 	Name:    "Dailymotion",
@@ -600,6 +651,15 @@ var blockedServices = []blockedService{{
 		"||dm-event.net^",
 		"||dmcdn.net^",
 	},
+	GroupID: "streaming",
+}, {
+	ID:      "deepseek",
+	Name:    "DeepSeek",
+	IconSVG: []byte("<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"currentColor\" viewBox=\"0 0 30 30\"><path d=\"M29.7 5.8c-.3-.1-.5.2-.7.3l-.1.2c-.5.5-1 .8-1.7.8a3 3 0 0 0-2.7 1c-.2-1-.8-1.5-1.6-2-.4-.1-.9-.3-1.2-.7l-.4-1c0-.2-.1-.4-.3-.4-.3 0-.4.1-.5.3-.4.7-.5 1.5-.5 2.3a5 5 0 0 0 2.3 4.3c.1 0 .2.2.1.4l-.3 1c0 .2-.2.3-.4.2-.8-.4-1.5-.9-2.2-1.5-1-1-2-2.2-3.2-3a13.8 13.8 0 0 0-.9-.7c-1.2-1.2.2-2.1.5-2.3.3 0 .1-.5-1-.5-1 0-2 .4-3.3.9a3.8 3.8 0 0 1-.6.1 12 12 0 0 0-3.6 0 7.8 7.8 0 0 0-5.6 3.2 9.6 9.6 0 0 0-1.6 7.6c.5 2.8 2 5.2 4.2 7 2.3 2 5 2.9 8 2.7 1.9 0 4-.3 6.3-2.3a7.3 7.3 0 0 0 4.4.3c.9-.2.8-1 .5-1.2-2.4-.8-2.7-1.1-2.7-1.1 1.4-1.7 3.4-3.3 4.3-8.8v-1c0-.3 0-.3.2-.4a5.2 5.2 0 0 0 2-.6c1.7-1 2.4-2.5 2.6-4.3 0-.3 0-.6-.3-.8zm-15.2 17C11.9 20.6 10.6 20 10 20c-.5 0-.4.6-.3 1l.4.9c.2.2.3.5 0 .7-1 .6-2.4-.1-2.5-.2a12.2 12.2 0 0 1-5.7-9.7c0-.5.1-.7.6-.7a5.9 5.9 0 0 1 1.9 0c2.7.3 5 1.5 6.8 3.4 1.1 1 2 2.3 2.8 3.6a17.3 17.3 0 0 0 4.2 4.5c-1 0-2.7.1-3.8-.8zm1.2-8.1a.4.4 0 0 1 .5-.4.4.4 0 0 1 .3.4.4.4 0 0 1-.4.3.4.4 0 0 1-.4-.3zm4 2-.8.2c-.4 0-.8-.2-1-.4-.4-.2-.6-.4-.7-1V15c.1-.5 0-.7-.3-1l-.8-.2a.7.7 0 0 1-.4-.1c-.1 0-.2-.2-.1-.4l.2-.3c.5-.3 1-.2 1.5 0 .4.2.7.5 1.2 1l.9 1.1.5 1c.1.3 0 .5-.3.7z\"/></svg>"),
+	Rules: []string{
+		"||deepseek.com^",
+	},
+	GroupID: "ai",
 }, {
 	ID:      "deezer",
 	Name:    "Deezer",
@@ -608,6 +668,7 @@ var blockedServices = []blockedService{{
 		"||deezer.com^",
 		"||dzcdn.net^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "directvgo",
 	Name:    "DirecTV Go",
@@ -615,6 +676,7 @@ var blockedServices = []blockedService{{
 	Rules: []string{
 		"||directvgo.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "discord",
 	Name:    "Discord",
@@ -648,6 +710,7 @@ var blockedServices = []blockedService{{
 		"||discordstatus.com^",
 		"||watchanimeattheoffice.com^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "discoveryplus",
 	Name:    "Discovery+",
@@ -656,6 +719,7 @@ var blockedServices = []blockedService{{
 		"||disco-api.com^",
 		"||discoveryplus.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "disneyplus",
 	Name:    "Disney+",
@@ -670,6 +734,7 @@ var blockedServices = []blockedService{{
 		"||star.playback.edge.bamgrid.com^",
 		"||starplus.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "douban",
 	Name:    "Douban",
@@ -679,6 +744,7 @@ var blockedServices = []blockedService{{
 		"||douban.fm^",
 		"||doubanio.com^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "dropbox",
 	Name:    "Dropbox",
@@ -707,6 +773,7 @@ var blockedServices = []blockedService{{
 		"||dropboxusercontent.com^",
 		"||getdropbox.com^",
 	},
+	GroupID: "hosting",
 }, {
 	ID:      "ebay",
 	Name:    "eBay",
@@ -1033,6 +1100,7 @@ var blockedServices = []blockedService{{
 		"||xxbay.com^",
 		"||yibei.org^",
 	},
+	GroupID: "shopping",
 }, {
 	ID:      "electronic_arts",
 	Name:    "Electronic Arts",
@@ -1045,6 +1113,7 @@ var blockedServices = []blockedService{{
 		"||swtor.com^",
 		"||tnt-ea.com^",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "epic_games",
 	Name:    "Epic Games",
@@ -1058,6 +1127,7 @@ var blockedServices = []blockedService{{
 		"||easyanticheat.net^",
 		"||epicgames.com^",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "espn",
 	Name:    "ESPN",
@@ -1081,6 +1151,7 @@ var blockedServices = []blockedService{{
 		"||espncdn.com^",
 		"||espncricinfo.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "facebook",
 	Name:    "Facebook",
@@ -1530,6 +1601,7 @@ var blockedServices = []blockedService{{
 		"||zuckerberg.com^",
 		"||zuckerberg.net^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "fifa",
 	Name:    "FIFA",
@@ -1538,6 +1610,7 @@ var blockedServices = []blockedService{{
 		"||fifa.com^",
 		"||fifaplus.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "flickr",
 	Name:    "Flickr",
@@ -1550,6 +1623,7 @@ var blockedServices = []blockedService{{
 		"||flickrpro.com^",
 		"||staticflickr.com^",
 	},
+	GroupID: "hosting",
 }, {
 	ID:      "globoplay",
 	Name:    "Globoplay",
@@ -1560,6 +1634,7 @@ var blockedServices = []blockedService{{
 		"||globoplay.com^",
 		"||globoplay.globo.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "gog",
 	Name:    "GOG",
@@ -1570,6 +1645,7 @@ var blockedServices = []blockedService{{
 		"||gog.com^",
 		"||gogalaxy.com^",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "hbomax",
 	Name:    "HBO Max",
@@ -1589,6 +1665,7 @@ var blockedServices = []blockedService{{
 		"||max.com^",
 		"||maxgo.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "hulu",
 	Name:    "Hulu",
@@ -1596,6 +1673,7 @@ var blockedServices = []blockedService{{
 	Rules: []string{
 		"||hulu.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "icloud_private_relay",
 	Name:    "iCloud Private Relay",
@@ -1605,6 +1683,7 @@ var blockedServices = []blockedService{{
 		"||mask-h2.icloud.com^$dnsrewrite=NXDOMAIN;;",
 		"||mask.icloud.com^$dnsrewrite=NXDOMAIN;;",
 	},
+	GroupID: "privacy",
 }, {
 	ID:      "iheartradio",
 	Name:    "iHeartRadio",
@@ -1622,6 +1701,7 @@ var blockedServices = []blockedService{{
 		"||ihrint.com^",
 		"||ihrstage.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "imgur",
 	Name:    "Imgur",
@@ -1629,6 +1709,7 @@ var blockedServices = []blockedService{{
 	Rules: []string{
 		"||imgur.com^",
 	},
+	GroupID: "hosting",
 }, {
 	ID:      "instagram",
 	Name:    "Instagram",
@@ -1707,6 +1788,7 @@ var blockedServices = []blockedService{{
 		"||web-instagram.net^",
 		"||wwwinstagram.com^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "iqiyi",
 	Name:    "iQIYI",
@@ -1721,6 +1803,7 @@ var blockedServices = []blockedService{{
 		"||qiyipic.com^",
 		"||qy.net^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "kakaotalk",
 	Name:    "KakaoTalk",
@@ -1729,6 +1812,7 @@ var blockedServices = []blockedService{{
 		"||kakao.com^",
 		"||kgslb.com^",
 	},
+	GroupID: "messenger",
 }, {
 	ID:      "kik",
 	Name:    "Kik",
@@ -1736,6 +1820,7 @@ var blockedServices = []blockedService{{
 	Rules: []string{
 		"||kik.com^",
 	},
+	GroupID: "messenger",
 }, {
 	ID:      "kook",
 	Name:    "KOOK",
@@ -1744,6 +1829,7 @@ var blockedServices = []blockedService{{
 		"||kaiheila.cn^",
 		"||kookapp.cn^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "lazada",
 	Name:    "Lazada",
@@ -1759,6 +1845,7 @@ var blockedServices = []blockedService{{
 		"||lazada.vn^",
 		"||slatic.net^",
 	},
+	GroupID: "shopping",
 }, {
 	ID:      "leagueoflegends",
 	Name:    "League of Legends",
@@ -1770,6 +1857,7 @@ var blockedServices = []blockedService{{
 		"||lolstatic.com^",
 		"||lolusercontent.com^",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "line",
 	Name:    "LINE",
@@ -1794,6 +1882,7 @@ var blockedServices = []blockedService{{
 		"||lineshoppingseller.com^",
 		"||linetv.tw^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "linkedin",
 	Name:    "LinkedIn",
@@ -1816,6 +1905,7 @@ var blockedServices = []blockedService{{
 		"||linkedin.qtlcdn.com^",
 		"||lnkd.in^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "lionsgateplus",
 	Name:    "Lionsgate+",
@@ -1824,6 +1914,7 @@ var blockedServices = []blockedService{{
 		"||lionsgateplus.com^",
 		"||starz.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "looke",
 	Name:    "Looke",
@@ -1832,6 +1923,7 @@ var blockedServices = []blockedService{{
 		"||looke.com.br^",
 		"||ottvs.com.br^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "mail_ru",
 	Name:    "Mail.ru",
@@ -1841,6 +1933,7 @@ var blockedServices = []blockedService{{
 		"||mail.ru^",
 		"||mycdn.me^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "mastodon",
 	Name:    "Mastodon",
@@ -1946,6 +2039,7 @@ var blockedServices = []blockedService{{
 		"||wien.rocks^",
 		"||wxw.moe^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "mercado_libre",
 	Name:    "Mercado Libre",
@@ -1972,6 +2066,7 @@ var blockedServices = []blockedService{{
 		"||mercadolivre.com.br^",
 		"||mlstatic.com^",
 	},
+	GroupID: "shopping",
 }, {
 	ID:      "minecraft",
 	Name:    "Minecraft",
@@ -1981,6 +2076,7 @@ var blockedServices = []blockedService{{
 		"||minecraftservices.com^",
 		"||mojang.com^",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "nebula",
 	Name:    "Nebula",
@@ -1989,6 +2085,7 @@ var blockedServices = []blockedService{{
 		"||nebula.app^",
 		"||nebula.tv^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "netflix",
 	Name:    "Netflix",
@@ -2020,6 +2117,7 @@ var blockedServices = []blockedService{{
 		"||nflxso.net^",
 		"||nflxvideo.net^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "nintendo",
 	Name:    "Nintendo",
@@ -2043,6 +2141,7 @@ var blockedServices = []blockedService{{
 		"||nintendoswitch.cn^",
 		"||nintendowifi.net^",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "nvidia",
 	Name:    "Nvidia",
@@ -2059,6 +2158,18 @@ var blockedServices = []blockedService{{
 		"||nvidianews.com^",
 		"||tegrazone.com^",
 	},
+	GroupID: "software",
+}, {
+	ID:      "odysee",
+	Name:    "Odysee",
+	IconSVG: []byte("<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"currentColor\" viewBox=\"-11 2 178 178\"><path d=\"M82 57c-14 5-20-2-21-14-1-13 12-17 12-17 14-5 18 2 21 12s1 14-12 19m65 85-9-28a67 67 0 0 0-21-23 5 5 0 0 1 0-8c7-6 18-18 22-25 3-4 7-13 8-20 0-6-1-12-8-15s-11 1-11 1c-5 3-6 12-9 21-4 10-10 11-13 11s-1-3-9-24c-7-21-26-17-40-9-19 11-11 35-6 50-3 2-12 4-21 9l-15 8c-6 6-9 11-7 19a12 12 0 0 0 6 7c5 2 13-1 24-10 9-6 19-9 19-9l13 24c7 13-7 17-8 17-2 0-23-2-18 16s31 12 44 3c14-9 10-38 10-38 13-2 17 12 19 19 1 7-2 19 11 20a21 21 0 0 0 6-1c7-2 11-5 13-9a9 9 0 0 0 0-6M88 33a9 9 0 0 0-2-3h-2v2l1 2 1 1h1l1-3m0 7-1 2a7 7 0 0 1 1 5l1 2h1l1-1c1-3 0-5-1-7l-2-1\"/></svg>"),
+	Rules: []string{
+		"||odycdn.com^",
+		"||odysee.com^",
+		"||odysee.live^",
+		"||odysee.tv^",
+	},
+	GroupID: "social_network",
 }, {
 	ID:      "ok",
 	Name:    "OK.ru",
@@ -2071,6 +2182,7 @@ var blockedServices = []blockedService{{
 		"||oktech.ru^",
 		"||st.mycdn.me^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "olvid",
 	Name:    "Olvid",
@@ -2079,6 +2191,7 @@ var blockedServices = []blockedService{{
 		"||olvid-attachment-chunks.s3.eu-west-3.amazonaws.com^",
 		"||olvid.io^",
 	},
+	GroupID: "messenger",
 }, {
 	ID:      "onlyfans",
 	Name:    "OnlyFans",
@@ -2086,6 +2199,7 @@ var blockedServices = []blockedService{{
 	Rules: []string{
 		"||onlyfans.com^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "origin",
 	Name:    "Origin",
@@ -2103,6 +2217,7 @@ var blockedServices = []blockedService{{
 		"||origin.tv^",
 		"||signin.ea.com^",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "paramountplus",
 	Name:    "Paramount Plus",
@@ -2111,6 +2226,7 @@ var blockedServices = []blockedService{{
 		"||paramountplus.com^",
 		"||pplusstatic.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "peacock_tv",
 	Name:    "Peacock TV",
@@ -2119,6 +2235,7 @@ var blockedServices = []blockedService{{
 		"||peacock.com^",
 		"||peacocktv.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "pinterest",
 	Name:    "Pinterest",
@@ -2174,6 +2291,7 @@ var blockedServices = []blockedService{{
 		"||pinterest.vn^",
 		"||pinterestmail.com^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "playstation",
 	Name:    "PlayStation",
@@ -2188,6 +2306,7 @@ var blockedServices = []blockedService{{
 		"||sonyentertainmentnetwork.com",
 		"||station.sony.com",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "plenty_of_fish",
 	Name:    "Plenty of Fish",
@@ -2195,6 +2314,7 @@ var blockedServices = []blockedService{{
 	Rules: []string{
 		"||pof.com^",
 	},
+	GroupID: "dating",
 }, {
 	ID:      "plex",
 	Name:    "Plex",
@@ -2205,6 +2325,7 @@ var blockedServices = []blockedService{{
 		"||plex.tv^",
 		"||plexapp.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "pluto_tv",
 	Name:    "Pluto TV",
@@ -2212,6 +2333,7 @@ var blockedServices = []blockedService{{
 	Rules: []string{
 		"||pluto.tv^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "privacy",
 	Name:    "Privacy",
@@ -2219,6 +2341,7 @@ var blockedServices = []blockedService{{
 	Rules: []string{
 		"||privacy.com.br^",
 	},
+	GroupID: "privacy",
 }, {
 	ID:      "qq",
 	Name:    "QQ",
@@ -2228,6 +2351,7 @@ var blockedServices = []blockedService{{
 		"||qq.com^$denyallow=wx.qq.com|weixin.qq.com",
 		"||url.cn^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "rakuten_viki",
 	Name:    "Rakuten Viki",
@@ -2237,6 +2361,7 @@ var blockedServices = []blockedService{{
 		"||viki.com^",
 		"||viki.io^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "reddit",
 	Name:    "Reddit",
@@ -2248,6 +2373,7 @@ var blockedServices = []blockedService{{
 		"||redditmedia.com^",
 		"||redditstatic.com^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "riot_games",
 	Name:    "Riot Games",
@@ -2260,6 +2386,7 @@ var blockedServices = []blockedService{{
 		"||riotcdn.net^",
 		"||riotgames.com^",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "roblox",
 	Name:    "Roblox",
@@ -2279,6 +2406,7 @@ var blockedServices = []blockedService{{
 		"||robloxcdn.com^",
 		"||robloxdev.cn^",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "rockstar_games",
 	Name:    "Rockstar Games",
@@ -2287,6 +2415,7 @@ var blockedServices = []blockedService{{
 		"||rockstargames.com^",
 		"||rsg.sc^",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "samsung_tv_plus",
 	Name:    "Samsung TV Plus",
@@ -2297,6 +2426,7 @@ var blockedServices = []blockedService{{
 		"||samsungcloud.tv^",
 		"||samsungtvplus.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "shein",
 	Name:    "Shein",
@@ -2307,6 +2437,7 @@ var blockedServices = []blockedService{{
 		"||shein.se^",
 		"||sheinsz.ltwebstatic.com^",
 	},
+	GroupID: "shopping",
 }, {
 	ID:      "shopee",
 	Name:    "Shopee",
@@ -2333,6 +2464,7 @@ var blockedServices = []blockedService{{
 		"||shopeemobile.com^",
 		"||shp.ee^",
 	},
+	GroupID: "shopping",
 }, {
 	ID:      "signal",
 	Name:    "Signal",
@@ -2341,6 +2473,7 @@ var blockedServices = []blockedService{{
 		"||signal.org^",
 		"||whispersystems.org^",
 	},
+	GroupID: "messenger",
 }, {
 	ID:      "skype",
 	Name:    "Skype",
@@ -2355,6 +2488,7 @@ var blockedServices = []blockedService{{
 		"||skypeassets.net^",
 		"||skypedata.akadns.net^",
 	},
+	GroupID: "messenger",
 }, {
 	ID:      "slack",
 	Name:    "Slack",
@@ -2366,6 +2500,7 @@ var blockedServices = []blockedService{{
 		"||slack.com^",
 		"||slackb.com^",
 	},
+	GroupID: "messenger",
 }, {
 	ID:      "snapchat",
 	Name:    "Snapchat",
@@ -2378,6 +2513,7 @@ var blockedServices = []blockedService{{
 		"||snapchat.com^",
 		"||snapkit.co",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "soundcloud",
 	Name:    "SoundCloud",
@@ -2386,6 +2522,7 @@ var blockedServices = []blockedService{{
 		"||sndcdn.com^",
 		"||soundcloud.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "spotify",
 	Name:    "Spotify",
@@ -2413,6 +2550,7 @@ var blockedServices = []blockedService{{
 		"||spotifyforbrands.com^",
 		"||spotifyjobs.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "spotify_video",
 	Name:    "Spotify Video",
@@ -2425,6 +2563,7 @@ var blockedServices = []blockedService{{
 		"||video-akpcw.spotifycdn.com^",
 		"||video-fa.scdn.co^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "steam",
 	Name:    "Steam",
@@ -2465,6 +2604,7 @@ var blockedServices = []blockedService{{
 		"||valvesoftware.com^",
 		"||wmsjsteam.com^",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "telegram",
 	Name:    "Telegram (Web)",
@@ -2488,6 +2628,7 @@ var blockedServices = []blockedService{{
 		"||tx.me^",
 		"||usercontent.dev^",
 	},
+	GroupID: "messenger",
 }, {
 	ID:      "temu",
 	Name:    "Temu",
@@ -2496,6 +2637,7 @@ var blockedServices = []blockedService{{
 		"||kwcdn.com^",
 		"||temu.com^",
 	},
+	GroupID: "shopping",
 }, {
 	ID:      "tidal",
 	Name:    "Tidal",
@@ -2503,6 +2645,7 @@ var blockedServices = []blockedService{{
 	Rules: []string{
 		"||tidal.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "tiktok",
 	Name:    "TikTok",
@@ -2542,6 +2685,7 @@ var blockedServices = []blockedService{{
 		"||v*.tiktokcdn-eu.com^",
 		"||zijieapi.com^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "tinder",
 	Name:    "Tinder",
@@ -2551,6 +2695,7 @@ var blockedServices = []blockedService{{
 		"||tinder.com^",
 		"||tindersparks.com^",
 	},
+	GroupID: "dating",
 }, {
 	ID:      "tumblr",
 	Name:    "Tumblr",
@@ -2558,6 +2703,7 @@ var blockedServices = []blockedService{{
 	Rules: []string{
 		"||tumblr.com^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "twitch",
 	Name:    "Twitch",
@@ -2570,6 +2716,7 @@ var blockedServices = []blockedService{{
 		"||twitchcdn.net^",
 		"||twitchsvc.net^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "twitter",
 	Name:    "X (formerly Twitter)",
@@ -2599,6 +2746,7 @@ var blockedServices = []blockedService{{
 		"||vine.co^",
 		"||x.com^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "ubisoft",
 	Name:    "Ubisoft",
@@ -2609,6 +2757,7 @@ var blockedServices = []blockedService{{
 		"||ubisoft.org^",
 		"||ubisoftconnect.com^",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "valorant",
 	Name:    "Valorant",
@@ -2618,6 +2767,7 @@ var blockedServices = []blockedService{{
 		"||valorant.scd.riotcdn.net",
 		"||valorant.secure.dyn.riotcdn.net",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "viber",
 	Name:    "Viber",
@@ -2625,6 +2775,7 @@ var blockedServices = []blockedService{{
 	Rules: []string{
 		"||viber.com^",
 	},
+	GroupID: "messenger",
 }, {
 	ID:      "vimeo",
 	Name:    "Vimeo",
@@ -2648,6 +2799,7 @@ var blockedServices = []blockedService{{
 		"||vimeoondemand.com^",
 		"||vimeostatus.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "vk",
 	Name:    "VK.com",
@@ -2674,6 +2826,7 @@ var blockedServices = []blockedService{{
 		"||vkuservideo.com^",
 		"||vkuservideo.net^",
 	},
+	GroupID: "social_network",
 }, {
 	ID:      "voot",
 	Name:    "Voot",
@@ -2681,6 +2834,7 @@ var blockedServices = []blockedService{{
 	Rules: []string{
 		"||voot.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "wargaming",
 	Name:    "Wargaming",
@@ -2695,6 +2849,7 @@ var blockedServices = []blockedService{{
 		"||worldofwarships.eu^",
 		"||wotblitz.com^",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "wechat",
 	Name:    "WeChat",
@@ -2706,6 +2861,7 @@ var blockedServices = []blockedService{{
 		"||weixinbridge.com^",
 		"||wx.qq.com^",
 	},
+	GroupID: "messenger",
 }, {
 	ID:      "weibo",
 	Name:    "Weibo",
@@ -2719,6 +2875,7 @@ var blockedServices = []blockedService{{
 		"||weibo.com^",
 		"||weibocdn.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "whatsapp",
 	Name:    "WhatsApp",
@@ -2736,6 +2893,7 @@ var blockedServices = []blockedService{{
 		"||whatsapp.tv^",
 		"||whatsappbrand.com^",
 	},
+	GroupID: "messenger",
 }, {
 	ID:      "wizz",
 	Name:    "Wizz",
@@ -2745,6 +2903,7 @@ var blockedServices = []blockedService{{
 		"||wizz.chat^",
 		"||wizzapp.com^",
 	},
+	GroupID: "dating",
 }, {
 	ID:      "xboxlive",
 	Name:    "Xbox Live",
@@ -2759,6 +2918,7 @@ var blockedServices = []blockedService{{
 		"||xboxlive.com^",
 		"||xboxservices.com^",
 	},
+	GroupID: "gaming",
 }, {
 	ID:      "xiaohongshu",
 	Name:    "Xiaohongshu",
@@ -2770,6 +2930,7 @@ var blockedServices = []blockedService{{
 		"||xiaohongshu.com^",
 		"||xiaohongshu.net^",
 	},
+	GroupID: "shopping",
 }, {
 	ID:      "youtube",
 	Name:    "YouTube",
@@ -2952,6 +3113,7 @@ var blockedServices = []blockedService{{
 		"||yt.be^",
 		"||ytimg.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "yy",
 	Name:    "YY",
@@ -2959,6 +3121,7 @@ var blockedServices = []blockedService{{
 	Rules: []string{
 		"||yy.com^",
 	},
+	GroupID: "streaming",
 }, {
 	ID:      "zhihu",
 	Name:    "Zhihu",
@@ -2967,4 +3130,32 @@ var blockedServices = []blockedService{{
 		"||zhihu.com^",
 		"||zhimg.com^",
 	},
+	GroupID: "social_network",
+}}
+
+// serviceGroups contains raw service group data.
+var serviceGroups = []serviceGroup{{
+	ID: "ai",
+}, {
+	ID: "cdn",
+}, {
+	ID: "dating",
+}, {
+	ID: "gambling",
+}, {
+	ID: "gaming",
+}, {
+	ID: "hosting",
+}, {
+	ID: "messenger",
+}, {
+	ID: "privacy",
+}, {
+	ID: "shopping",
+}, {
+	ID: "social_network",
+}, {
+	ID: "software",
+}, {
+	ID: "streaming",
 }}

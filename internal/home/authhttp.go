@@ -103,7 +103,7 @@ func (web *webAPI) handleLogin(w http.ResponseWriter, r *http.Request) {
 	req := loginJSON{}
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		aghhttp.Error(r, w, http.StatusBadRequest, "json decode: %s", err)
+		aghhttp.ErrorAndLog(ctx, web.logger, r, w, http.StatusBadRequest, "json decode: %s", err)
 
 		return
 	}
@@ -173,7 +173,7 @@ func (web *webAPI) handleLogin(w http.ResponseWriter, r *http.Request) {
 	h.Set(httphdr.Pragma, "no-cache")
 	h.Set(httphdr.Expires, "0")
 
-	aghhttp.OK(w)
+	aghhttp.OK(ctx, web.logger, w)
 }
 
 // newCookie creates a new authentication cookie.  rateLimiter must not be nil.
@@ -264,13 +264,13 @@ func (web *webAPI) handleLogout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusFound)
 }
 
-// RegisterAuthHandlers - register handlers
-func RegisterAuthHandlers(web *webAPI) {
-	globalContext.mux.Handle(
-		"/control/login",
-		postInstallHandler(ensureHandler(http.MethodPost, web.handleLogin)),
+// registerAuthHandlers registers authentication handlers.
+func (web *webAPI) registerAuthHandlers() {
+	web.conf.mux.Handle(
+		http.MethodPost+" "+"/control/login",
+		web.postInstallHandler(http.HandlerFunc(web.handleLogin)),
 	)
-	httpRegister(http.MethodGet, "/control/logout", web.handleLogout)
+	web.httpReg.Register(http.MethodGet, "/control/logout", web.handleLogout)
 }
 
 // isPublicResource returns true if p is a path to a public resource.
@@ -320,7 +320,7 @@ type authMiddlewareDefaultConfig struct {
 	logger *slog.Logger
 
 	// rateLimiter manages the rate limiting for login attempts.
-	rateLimiter loginRaateLimiter
+	rateLimiter loginRateLimiter
 
 	// trustedProxies is a set of subnets considered as trusted.
 	//
@@ -340,7 +340,7 @@ type authMiddlewareDefaultConfig struct {
 // passes it with the context.
 type authMiddlewareDefault struct {
 	logger         *slog.Logger
-	rateLimiter    loginRaateLimiter
+	rateLimiter    loginRateLimiter
 	trustedProxies netutil.SubnetSet
 	sessions       aghuser.SessionStorage
 	users          aghuser.DB
@@ -506,9 +506,10 @@ func (mw *authMiddlewareDefault) userFromRequestBasicAuth(
 		return nil, fmt.Errorf("login attempt blocked for %s", left)
 	}
 
-	rateLimiter.inc(remoteIP)
 	defer func() {
 		if err != nil {
+			rateLimiter.inc(remoteIP)
+
 			return
 		}
 

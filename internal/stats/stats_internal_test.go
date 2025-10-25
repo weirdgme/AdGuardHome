@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AdguardTeam/AdGuardHome/internal/aghhttp"
 	"github.com/AdguardTeam/golibs/logutil/slogutil"
 	"github.com/AdguardTeam/golibs/testutil"
 	"github.com/AdguardTeam/golibs/timeutil"
@@ -21,6 +22,7 @@ func TestStats_races(t *testing.T) {
 	conf := Config{
 		Logger:            slogutil.NewDiscardLogger(),
 		ShouldCountClient: func([]string) bool { return true },
+		HTTPReg:           aghhttp.EmptyRegistrar{},
 		UnitID:            idGen,
 		Filename:          filepath.Join(t.TempDir(), "./stats.db"),
 		Limit:             timeutil.Day,
@@ -64,7 +66,7 @@ func TestStats_races(t *testing.T) {
 		readersNum = 5
 	)
 
-	for round := 0; round < roundsNum; round++ {
+	for round := range roundsNum {
 		atomic.StoreUint32(&r, uint32(round))
 
 		startWG, finWG := &sync.WaitGroup{}, &sync.WaitGroup{}

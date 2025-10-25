@@ -17,6 +17,7 @@ import (
 	"github.com/AdguardTeam/golibs/errors"
 	"github.com/AdguardTeam/golibs/ioutil"
 	"github.com/AdguardTeam/golibs/logutil/slogutil"
+	"github.com/AdguardTeam/golibs/syncutil"
 )
 
 // download and save all translations.
@@ -41,17 +42,21 @@ func (c *twoskyClient) download(ctx context.Context, l *slog.Logger) (err error)
 
 	downloadURI := c.uri.JoinPath("download")
 
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-
 	wg := &sync.WaitGroup{}
-	failed := &sync.Map{}
 	uriCh := make(chan *url.URL, len(c.langs))
 
+	dw := &downloadWorker{
+		ctx:    ctx,
+		l:      l,
+		failed: syncutil.NewMap[string, struct{}](),
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+		uriCh: uriCh,
+	}
+
 	for range numWorker {
-		wg.Add(1)
-		go downloadWorker(ctx, l, wg, failed, client, uriCh)
+		wg.Go(dw.run)
 	}
 
 	for _, lang := range c.langs {
@@ -63,53 +68,54 @@ func (c *twoskyClient) download(ctx context.Context, l *slog.Logger) (err error)
 	close(uriCh)
 	wg.Wait()
 
-	printFailedLocales(ctx, l, failed)
+	printFailedLocales(ctx, l, dw.failed)
 
 	return nil
 }
 
-// printFailedLocales prints sorted list of failed downloads, if any.
-func printFailedLocales(ctx context.Context, l *slog.Logger, failed *sync.Map) {
-	keys := []string{}
-	failed.Range(func(k, _ any) bool {
-		s, ok := k.(string)
-		if !ok {
-			panic("unexpected type")
-		}
-
-		keys = append(keys, s)
-
-		return true
-	})
+// printFailedLocales prints sorted list of failed downloads, if any.  l and
+// failed must not be nil.
+func printFailedLocales(
+	ctx context.Context,
+	l *slog.Logger,
+	failed *syncutil.Map[string, struct{}],
+) {
+	var keys []string
+	for k := range failed.Range {
+		keys = append(keys, k)
+	}
 
 	if len(keys) == 0 {
 		return
 	}
 
 	slices.Sort(keys)
+
 	l.InfoContext(ctx, "failed", "locales", keys)
 }
 
-// downloadWorker downloads translations by received urls and saves them.
-// Where failed is a map for storing failed downloads.
-func downloadWorker(
-	ctx context.Context,
-	l *slog.Logger,
-	wg *sync.WaitGroup,
-	failed *sync.Map,
-	client *http.Client,
-	uriCh <-chan *url.URL,
-) {
-	defer wg.Done()
+// downloadWorker is a worker for downloading translations.  It uses URLs
+// received from the channel to download translations and save them to files.
+// Failures are stored in the failed map.  All fields must not be nil.
+type downloadWorker struct {
+	ctx    context.Context
+	l      *slog.Logger
+	failed *syncutil.Map[string, struct{}]
+	client *http.Client
+	uriCh  <-chan *url.URL
+}
 
-	for uri := range uriCh {
+// run handles the channel of URLs, one by one.  It returns when the channel is
+// closed.  It's used to be run in a separate goroutine.
+func (w *downloadWorker) run() {
+	for uri := range w.uriCh {
 		q := uri.Query()
 		code := q.Get("language")
 
-		err := saveToFile(ctx, l, client, uri, code)
+		err := saveToFile(w.ctx, w.l, w.client, uri, code)
 		if err != nil {
-			l.ErrorContext(ctx, "download worker", slogutil.KeyError, err)
-			failed.Store(code, struct{}{})
+			w.l.ErrorContext(w.ctx, "download worker", slogutil.KeyError, err)
+			w.failed.Store(code, struct{}{})
 		}
 	}
 }

@@ -4,6 +4,7 @@ package dhcpd
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net"
 	"net/netip"
@@ -1096,9 +1097,7 @@ func (s *v4Server) handleRelease(req, resp *dhcpv4.DHCPv4) (err error) {
 
 		err = s.rmDynamicLease(l)
 		if err != nil {
-			err = fmt.Errorf("removing dynamic lease for %s: %w", mac, err)
-
-			return
+			return fmt.Errorf("removing dynamic lease for %s: %w", mac, err)
 		}
 
 		n++
@@ -1301,7 +1300,7 @@ func (s *v4Server) packetHandler(conn net.PacketConn, peer net.Addr, req *dhcpv4
 }
 
 // Start starts the IPv4 DHCP server.
-func (s *v4Server) Start() (err error) {
+func (s *v4Server) Start(ctx context.Context) (err error) {
 	defer func() { err = errors.Annotate(err, "dhcpv4: %w") }()
 
 	if !s.enabled() {
@@ -1317,6 +1316,8 @@ func (s *v4Server) Start() (err error) {
 	log.Debug("dhcpv4: starting...")
 
 	dnsIPAddrs, err := aghnet.IfaceDNSIPAddrs(
+		ctx,
+		s.conf.Logger,
 		iface,
 		aghnet.IPVersion4,
 		defaultMaxAttempts,
@@ -1391,7 +1392,7 @@ func (s *v4Server) configureDNSIPAddrs(dnsIPAddrs []net.IP) {
 // Stop - stop server
 func (s *v4Server) Stop() (err error) {
 	if s.srv == nil {
-		return
+		return nil
 	}
 
 	log.Debug("dhcpv4: stopping")

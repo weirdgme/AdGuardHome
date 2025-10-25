@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AdguardTeam/AdGuardHome/internal/agh"
+	"github.com/AdguardTeam/AdGuardHome/internal/aghhttp"
 	"github.com/AdguardTeam/AdGuardHome/internal/aghnet"
 	"github.com/AdguardTeam/AdGuardHome/internal/arpdb"
 	"github.com/AdguardTeam/AdGuardHome/internal/client"
@@ -39,6 +41,13 @@ type clientsContainer struct {
 	// settings.
 	clientChecker BlockedClientChecker
 
+	// confModifier is used to update the global configuration.  It must not be
+	// nil.
+	confModifier agh.ConfigModifier
+
+	// httpReg registers HTTP handlers.  It must not be nil.
+	httpReg aghhttp.Registrar
+
 	// lock protects all fields.
 	//
 	// TODO(a.garipov): Use a pointer and describe which fields are protected in
@@ -52,11 +61,6 @@ type clientsContainer struct {
 	// safeSearchCacheTTL is the TTL of the safe search cache to use for
 	// persistent clients.
 	safeSearchCacheTTL time.Duration
-
-	// testing is a flag that disables some features for internal tests.
-	//
-	// TODO(a.garipov): Awful.  Remove.
-	testing bool
 }
 
 // BlockedClientChecker checks if a client is blocked by the current access
@@ -66,9 +70,12 @@ type BlockedClientChecker interface {
 	IsBlockedClient(ip netip.Addr, clientID string) (blocked bool, rule string)
 }
 
-// Init initializes clients container
-// dhcpServer: optional
-// Note: this function must be called only once
+// Init initializes the clients container.  All arguments must not be nil except
+// for objects.
+//
+// NOTE:  This function must be called only once.
+//
+// TODO(s.chzhen):  Use a configuration structure.
 func (clients *clientsContainer) Init(
 	ctx context.Context,
 	baseLogger *slog.Logger,
@@ -78,6 +85,8 @@ func (clients *clientsContainer) Init(
 	arpDB arpdb.Interface,
 	filteringConf *filtering.Config,
 	sigHdlr *signalHandler,
+	confModifier agh.ConfigModifier,
+	httpReg aghhttp.Registrar,
 ) (err error) {
 	// TODO(s.chzhen):  Refactor it.
 	if clients.storage != nil {
@@ -88,6 +97,8 @@ func (clients *clientsContainer) Init(
 	clients.logger = baseLogger.With(slogutil.KeyPrefix, "client_container")
 	clients.safeSearchCacheSize = filteringConf.SafeSearchCacheSize
 	clients.safeSearchCacheTTL = time.Minute * time.Duration(filteringConf.CacheTime)
+	clients.confModifier = confModifier
+	clients.httpReg = httpReg
 
 	confClients := make([]*client.Persistent, 0, len(objects))
 	for i, o := range objects {
@@ -141,10 +152,6 @@ var webHandlersRegistered = false
 
 // Start starts the clients container.
 func (clients *clientsContainer) Start(ctx context.Context) (err error) {
-	if clients.testing {
-		return
-	}
-
 	if !webHandlersRegistered {
 		webHandlersRegistered = true
 		clients.registerWebHandlers()

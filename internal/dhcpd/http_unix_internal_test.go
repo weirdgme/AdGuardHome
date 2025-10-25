@@ -10,6 +10,8 @@ import (
 	"net/netip"
 	"testing"
 
+	"github.com/AdguardTeam/AdGuardHome/internal/agh"
+	"github.com/AdguardTeam/golibs/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,18 +35,18 @@ func defaultResponse() *dhcpStatusResponse {
 
 // handleLease is the helper function that calls handler with provided static
 // lease as body and returns modified response recorder.
-func handleLease(t *testing.T, lease *leaseStatic, handler http.HandlerFunc) (w *httptest.ResponseRecorder) {
-	t.Helper()
+func handleLease(tb testing.TB, lease *leaseStatic, handler http.HandlerFunc) (w *httptest.ResponseRecorder) {
+	tb.Helper()
 
 	w = httptest.NewRecorder()
 
 	b := &bytes.Buffer{}
 	err := json.NewEncoder(b).Encode(lease)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 
 	var r *http.Request
 	r, err = http.NewRequest(http.MethodPost, "", b)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 
 	handler(w, r)
 
@@ -83,11 +85,13 @@ func TestServer_handleDHCPStatus(t *testing.T) {
 		Hostname: staticName,
 	}
 
-	s, err := Create(&ServerConfig{
-		Enabled:        true,
-		Conf4:          *defaultV4ServerConf(),
-		DataDir:        t.TempDir(),
-		ConfigModified: func() {},
+	ctx := testutil.ContextWithTimeout(t, testTimeout)
+	s, err := Create(ctx, &ServerConfig{
+		Logger:       testLogger,
+		Enabled:      true,
+		Conf4:        *defaultV4ServerConf(),
+		DataDir:      t.TempDir(),
+		ConfModifier: agh.EmptyConfigModifier{},
 	})
 	require.NoError(t, err)
 
@@ -177,12 +181,14 @@ func TestServer_HandleUpdateStaticLease(t *testing.T) {
 		},
 	}
 
-	s, err := Create(&ServerConfig{
-		Enabled:        true,
-		Conf4:          *defaultV4ServerConf(),
-		Conf6:          V6ServerConf{},
-		DataDir:        t.TempDir(),
-		ConfigModified: func() {},
+	ctx := testutil.ContextWithTimeout(t, testTimeout)
+	s, err := Create(ctx, &ServerConfig{
+		Logger:       testLogger,
+		Enabled:      true,
+		Conf4:        *defaultV4ServerConf(),
+		Conf6:        V6ServerConf{},
+		DataDir:      t.TempDir(),
+		ConfModifier: agh.EmptyConfigModifier{},
 	})
 	require.NoError(t, err)
 
@@ -265,12 +271,14 @@ func TestServer_HandleUpdateStaticLease_validation(t *testing.T) {
 		Hostname: anotherV4Name,
 	}}
 
-	s, err := Create(&ServerConfig{
-		Enabled:        true,
-		Conf4:          *defaultV4ServerConf(),
-		Conf6:          V6ServerConf{},
-		DataDir:        t.TempDir(),
-		ConfigModified: func() {},
+	ctx := testutil.ContextWithTimeout(t, testTimeout)
+	s, err := Create(ctx, &ServerConfig{
+		Logger:       testLogger,
+		Enabled:      true,
+		Conf4:        *defaultV4ServerConf(),
+		Conf6:        V6ServerConf{},
+		DataDir:      t.TempDir(),
+		ConfModifier: agh.EmptyConfigModifier{},
 	})
 	require.NoError(t, err)
 

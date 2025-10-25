@@ -1,6 +1,7 @@
 package aghnet_test
 
 import (
+	"context"
 	"net/netip"
 	"path"
 	"sync/atomic"
@@ -66,11 +67,15 @@ func TestNewHostsContainer(t *testing.T) {
 				return eventsCh
 			}
 
-			hc, err := aghnet.NewHostsContainer(testFS, &aghtest.FSWatcher{
-				OnStart:  func() (_ error) { panic("not implemented") },
-				OnEvents: onEvents,
-				OnAdd:    onAdd,
-				OnClose:  func() (err error) { return nil },
+			ctx := testutil.ContextWithTimeout(t, testTimeout)
+
+			hc, err := aghnet.NewHostsContainer(ctx, testLogger, testFS, &aghtest.FSWatcher{
+				OnStart: func(ctx context.Context) (_ error) {
+					panic(testutil.UnexpectedCall(ctx))
+				},
+				OnEvents:   onEvents,
+				OnAdd:      onAdd,
+				OnShutdown: func(_ context.Context) (err error) { return nil },
 			}, tc.paths...)
 			if tc.wantErr != nil {
 				require.ErrorIs(t, err, tc.wantErr)
@@ -92,20 +97,24 @@ func TestNewHostsContainer(t *testing.T) {
 	}
 
 	t.Run("nil_fs", func(t *testing.T) {
+		ctx := testutil.ContextWithTimeout(t, testTimeout)
 		require.Panics(t, func() {
-			_, _ = aghnet.NewHostsContainer(nil, &aghtest.FSWatcher{
-				OnStart: func() (_ error) { panic("not implemented") },
+			_, _ = aghnet.NewHostsContainer(ctx, testLogger, nil, &aghtest.FSWatcher{
+				OnStart: func(ctx context.Context) (_ error) {
+					panic(testutil.UnexpectedCall(ctx))
+				},
 				// Those shouldn't panic.
-				OnEvents: func() (e <-chan struct{}) { return nil },
-				OnAdd:    func(name string) (err error) { return nil },
-				OnClose:  func() (err error) { return nil },
+				OnEvents:   func() (e <-chan struct{}) { return nil },
+				OnAdd:      func(_ string) (err error) { return nil },
+				OnShutdown: func(_ context.Context) (err error) { return nil },
 			}, p)
 		})
 	})
 
 	t.Run("nil_watcher", func(t *testing.T) {
 		require.Panics(t, func() {
-			_, _ = aghnet.NewHostsContainer(testFS, nil, p)
+			ctx := testutil.ContextWithTimeout(t, testTimeout)
+			_, _ = aghnet.NewHostsContainer(ctx, testLogger, testFS, nil, p)
 		})
 	})
 
@@ -113,13 +122,14 @@ func TestNewHostsContainer(t *testing.T) {
 		const errOnAdd errors.Error = "error"
 
 		errWatcher := &aghtest.FSWatcher{
-			OnStart:  func() (_ error) { panic("not implemented") },
-			OnEvents: func() (e <-chan struct{}) { panic("not implemented") },
-			OnAdd:    func(name string) (err error) { return errOnAdd },
-			OnClose:  func() (err error) { return nil },
+			OnStart:    func(ctx context.Context) (_ error) { panic(testutil.UnexpectedCall(ctx)) },
+			OnEvents:   func() (_ <-chan struct{}) { panic(testutil.UnexpectedCall()) },
+			OnAdd:      func(_ string) (err error) { return errOnAdd },
+			OnShutdown: func(_ context.Context) (err error) { return nil },
 		}
 
-		hc, err := aghnet.NewHostsContainer(testFS, errWatcher, p)
+		ctx := testutil.ContextWithTimeout(t, testTimeout)
+		hc, err := aghnet.NewHostsContainer(ctx, testLogger, testFS, errWatcher, p)
 		require.ErrorIs(t, err, errOnAdd)
 
 		assert.Nil(t, hc)
@@ -158,22 +168,25 @@ func TestHostsContainer_refresh(t *testing.T) {
 	t.Cleanup(func() { close(eventsCh) })
 
 	w := &aghtest.FSWatcher{
-		OnStart:  func() (_ error) { panic("not implemented") },
+		OnStart:  func(ctx context.Context) (_ error) { panic(testutil.UnexpectedCall(ctx)) },
 		OnEvents: func() (e <-chan event) { return eventsCh },
 		OnAdd: func(name string) (err error) {
 			assert.Equal(t, "dir", name)
 
 			return nil
 		},
-		OnClose: func() (err error) { return nil },
+		OnShutdown: func(_ context.Context) (err error) { return nil },
 	}
 
-	hc, err := aghnet.NewHostsContainer(testFS, w, "dir")
+	ctx := testutil.ContextWithTimeout(t, testTimeout)
+	hc, err := aghnet.NewHostsContainer(ctx, testLogger, testFS, w, "dir")
 	require.NoError(t, err)
 	testutil.CleanupAndRequireSuccess(t, hc.Close)
 
-	strg, _ := hostsfile.NewDefaultStorage()
-	strg.Add(r1)
+	strg, _ := hostsfile.NewDefaultStorage(ctx, &hostsfile.DefaultStorageConfig{
+		Logger: testLogger,
+	})
+	strg.Add(ctx, r1)
 
 	t.Run("initial_refresh", func(t *testing.T) {
 		upd, ok := testutil.RequireReceive(t, hc.Upd(), 1*time.Second)
@@ -182,7 +195,7 @@ func TestHostsContainer_refresh(t *testing.T) {
 		assert.True(t, strg.Equal(upd))
 	})
 
-	strg.Add(r2)
+	strg.Add(ctx, r2)
 
 	t.Run("second_refresh", func(t *testing.T) {
 		testFS["dir/file2"] = &fstest.MapFile{Data: r2Data}

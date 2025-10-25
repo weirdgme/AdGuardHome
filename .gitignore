@@ -37,5 +37,6 @@ AdGuardHome.exe
 AdGuardHome.yaml*
 coverage.txt
 node_modules/
+tmp/
 
 !/build/gitkeep

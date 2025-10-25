@@ -9,18 +9,20 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"time"
 	"unicode/utf8"
 
+	"github.com/AdguardTeam/AdGuardHome/internal/agh"
 	"github.com/AdguardTeam/AdGuardHome/internal/aghalg"
 	"github.com/AdguardTeam/AdGuardHome/internal/aghhttp"
 	"github.com/AdguardTeam/AdGuardHome/internal/aghnet"
 	"github.com/AdguardTeam/AdGuardHome/internal/version"
+	"github.com/AdguardTeam/golibs/container"
 	"github.com/AdguardTeam/golibs/errors"
 	"github.com/AdguardTeam/golibs/logutil/slogutil"
+	"github.com/AdguardTeam/golibs/osutil/executil"
 	"github.com/quic-go/quic-go/http3"
 )
 
@@ -41,16 +43,27 @@ type getAddrsResponse struct {
 
 // handleInstallGetAddresses is the handler for /install/get_addresses endpoint.
 func (web *webAPI) handleInstallGetAddresses(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	l := web.logger
+
 	data := getAddrsResponse{
 		Version: version.Version(),
 
-		WebPort: int(defaultPortHTTP),
+		WebPort: int(web.conf.defaultWebPort),
 		DNSPort: int(defaultPortDNS),
 	}
 
 	ifaces, err := aghnet.GetValidNetInterfacesForWeb()
 	if err != nil {
-		aghhttp.Error(r, w, http.StatusInternalServerError, "Couldn't get interfaces: %s", err)
+		aghhttp.ErrorAndLog(
+			ctx,
+			l,
+			r,
+			w,
+			http.StatusInternalServerError,
+			"Couldn't get interfaces: %s",
+			err,
+		)
 
 		return
 	}
@@ -60,7 +73,7 @@ func (web *webAPI) handleInstallGetAddresses(w http.ResponseWriter, r *http.Requ
 		data.Interfaces[iface.Name] = iface
 	}
 
-	aghhttp.WriteJSONResponseOK(w, r, data)
+	aghhttp.WriteJSONResponseOK(ctx, l, w, r, data)
 }
 
 type checkConfReqEnt struct {
@@ -123,11 +136,12 @@ func (req *checkConfReq) validateWeb(tcpPorts aghalg.UniqChecker[tcpPort]) (err 
 
 // validateDNS returns error if the DNS part of the initial configuration can't
 // be set.  canAutofix is true if the port can be unbound by AdGuard Home
-// automatically.
+// automatically.  cmdCons must not be nil.
 func (req *checkConfReq) validateDNS(
 	ctx context.Context,
 	l *slog.Logger,
 	tcpPorts aghalg.UniqChecker[tcpPort],
+	cmdCons executil.CommandConstructor,
 ) (canAutofix bool, err error) {
 	defer func() { err = errors.Annotate(err, "validating ports: %w") }()
 
@@ -159,7 +173,7 @@ func (req *checkConfReq) validateDNS(
 	// Try to fix automatically.
 	canAutofix = checkDNSStubListener(ctx, l)
 	if canAutofix && req.DNS.Autofix {
-		if derr := disableDNSStubListener(ctx, l); derr != nil {
+		if derr := disableDNSStubListener(ctx, l, cmdCons); derr != nil {
 			l.ErrorContext(ctx, "disabling DNSStubListener", slogutil.KeyError, err)
 		}
 
@@ -172,11 +186,14 @@ func (req *checkConfReq) validateDNS(
 
 // handleInstallCheckConfig handles the /check_config endpoint.
 func (web *webAPI) handleInstallCheckConfig(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	l := web.logger
+
 	req := &checkConfReq{}
 
 	err := json.NewDecoder(r.Body).Decode(req)
 	if err != nil {
-		aghhttp.Error(r, w, http.StatusBadRequest, "decoding the request: %s", err)
+		aghhttp.ErrorAndLog(ctx, l, r, w, http.StatusBadRequest, "decoding the request: %s", err)
 
 		return
 	}
@@ -187,53 +204,62 @@ func (web *webAPI) handleInstallCheckConfig(w http.ResponseWriter, r *http.Reque
 		resp.Web.Status = err.Error()
 	}
 
-	if resp.DNS.CanAutofix, err = req.validateDNS(r.Context(), web.logger, tcpPorts); err != nil {
+	resp.DNS.CanAutofix, err = req.validateDNS(ctx, l, tcpPorts, web.cmdCons)
+	if err != nil {
 		resp.DNS.Status = err.Error()
 	} else if !req.DNS.IP.IsUnspecified() {
-		resp.StaticIP = handleStaticIP(req.DNS.IP, req.SetStaticIP)
+		resp.StaticIP = handleStaticIP(ctx, l, req.DNS.IP, req.SetStaticIP, web.cmdCons)
 	}
 
-	aghhttp.WriteJSONResponseOK(w, r, resp)
+	aghhttp.WriteJSONResponseOK(ctx, l, w, r, resp)
 }
 
-// handleStaticIP - handles static IP request
-// It either checks if we have a static IP
-// Or if set=true, it tries to set it
-func handleStaticIP(ip netip.Addr, set bool) staticIPJSON {
-	resp := staticIPJSON{}
-
+// handleStaticIP checks and optionally sets a static IP on the interface that
+// owns IP.  cmdCons must not be nil.
+func handleStaticIP(
+	ctx context.Context,
+	l *slog.Logger,
+	ip netip.Addr,
+	set bool,
+	cmdCons executil.CommandConstructor,
+) (ipResp staticIPJSON) {
 	interfaceName := aghnet.InterfaceByIP(ip)
-	resp.Static = "no"
+	ipResp.Static = "no"
 
-	if len(interfaceName) == 0 {
-		resp.Static = "error"
-		resp.Error = fmt.Sprintf("Couldn't find network interface by IP %s", ip)
-		return resp
+	if interfaceName == "" {
+		ipResp.Static = "error"
+		ipResp.Error = fmt.Sprintf("Couldn't find network interface by IP %s", ip)
+
+		return ipResp
 	}
 
 	if set {
-		// Try to set static IP for the specified interface
-		err := aghnet.IfaceSetStaticIP(interfaceName)
+		// Try to set a static IP for the specified interface.
+		err := aghnet.IfaceSetStaticIP(ctx, l, cmdCons, interfaceName)
 		if err != nil {
-			resp.Static = "error"
-			resp.Error = err.Error()
-			return resp
+			ipResp.Static = "error"
+			ipResp.Error = err.Error()
+
+			return ipResp
 		}
 	}
 
-	// Fallthrough here even if we set static IP
-	// Check if we have a static IP and return the details
-	isStaticIP, err := aghnet.IfaceHasStaticIP(interfaceName)
+	// Fall through even if we just set the static IP.  Check whether the
+	// interface has a static IP and return the details.
+	isStaticIP, err := aghnet.IfaceHasStaticIP(ctx, cmdCons, interfaceName)
 	if err != nil {
-		resp.Static = "error"
-		resp.Error = err.Error()
-	} else {
-		if isStaticIP {
-			resp.Static = "yes"
-		}
-		resp.IP = aghnet.GetSubnet(interfaceName).String()
+		ipResp.Static = "error"
+		ipResp.Error = err.Error()
+
+		return ipResp
 	}
-	return resp
+
+	if isStaticIP {
+		ipResp.Static = "yes"
+	}
+	ipResp.IP = aghnet.GetSubnet(ctx, l, interfaceName).String()
+
+	return ipResp
 }
 
 // checkDNSStubListener returns true if DNSStubListener is active.
@@ -242,34 +268,29 @@ func checkDNSStubListener(ctx context.Context, l *slog.Logger) (ok bool) {
 		return false
 	}
 
-	cmd := exec.Command("systemctl", "is-enabled", "systemd-resolved")
-	l.DebugContext(ctx, "executing", "cmd", cmd.Path, "args", cmd.Args)
-	_, err := cmd.Output()
-	if err != nil || cmd.ProcessState.ExitCode() != 0 {
-		l.InfoContext(
+	cmds := container.KeyValues[string, []string]{{
+		Key:   "systemctl",
+		Value: []string{"is-enabled", "systemd-resolved"},
+	}, {
+		Key:   "grep",
+		Value: []string{"-E", "#?DNSStubListener=yes", "/etc/systemd/resolved.conf"},
+	}}
+
+	for _, cmd := range cmds {
+		l.DebugContext(ctx, "executing", "cmd", cmd.Key, "args", cmd.Value)
+
+		err := executil.RunWithPeek(
 			ctx,
-			"execution failed",
-			"cmd", cmd.Path,
-			"code", cmd.ProcessState.ExitCode(),
-			slogutil.KeyError, err,
+			executil.SystemCommandConstructor{},
+			agh.DefaultOutputLimit,
+			cmd.Key,
+			cmd.Value...,
 		)
+		if err != nil {
+			l.InfoContext(ctx, "execution failed", "cmd", cmd.Key, slogutil.KeyError, err)
 
-		return false
-	}
-
-	cmd = exec.Command("grep", "-E", "#?DNSStubListener=yes", "/etc/systemd/resolved.conf")
-	l.DebugContext(ctx, "executing", "cmd", cmd.Path, "args", cmd.Args)
-	_, err = cmd.Output()
-	if err != nil || cmd.ProcessState.ExitCode() != 0 {
-		l.InfoContext(
-			ctx,
-			"execution failed",
-			"cmd", cmd.Path,
-			"code", cmd.ProcessState.ExitCode(),
-			slogutil.KeyError, err,
-		)
-
-		return false
+			return false
+		}
 	}
 
 	return true
@@ -285,8 +306,12 @@ DNSStubListener=no
 const resolvConfPath = "/etc/resolv.conf"
 
 // disableDNSStubListener deactivates DNSStubListerner and returns an error, if
-// any.
-func disableDNSStubListener(ctx context.Context, l *slog.Logger) (err error) {
+// any.  cmdCons must not be nil.
+func disableDNSStubListener(
+	ctx context.Context,
+	l *slog.Logger,
+	cmdCons executil.CommandConstructor,
+) (err error) {
 	dir := filepath.Dir(resolvedConfPath)
 	err = os.MkdirAll(dir, 0o755)
 	if err != nil {
@@ -305,15 +330,21 @@ func disableDNSStubListener(ctx context.Context, l *slog.Logger) (err error) {
 		return fmt.Errorf("os.Symlink: %s: %w", resolvConfPath, err)
 	}
 
-	cmd := exec.Command("systemctl", "reload-or-restart", "systemd-resolved")
-	l.DebugContext(ctx, "executing", "cmd", cmd.Path, "args", cmd.Args)
-	_, err = cmd.Output()
+	const systemctlCmd = "systemctl"
+
+	systemctlArgs := []string{"reload-or-restart", "systemd-resolved"}
+
+	l.DebugContext(ctx, "executing", "cmd", systemctlCmd, "args", systemctlArgs)
+
+	err = executil.RunWithPeek(
+		ctx,
+		cmdCons,
+		agh.DefaultOutputLimit,
+		systemctlCmd,
+		systemctlArgs...,
+	)
 	if err != nil {
-		return err
-	}
-	if cmd.ProcessState.ExitCode() != 0 {
-		return fmt.Errorf("process %s exited with an error: %d",
-			cmd.Path, cmd.ProcessState.ExitCode())
+		return fmt.Errorf("executing cmd: %w", err)
 	}
 
 	return nil
@@ -393,16 +424,19 @@ const PasswordMinRunes = 8
 // Apply new configuration, start DNS server, restart Web server
 func (web *webAPI) handleInstallConfigure(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	l := web.logger
 
 	req, restartHTTP, err := decodeApplyConfigReq(r.Body)
 	if err != nil {
-		aghhttp.Error(r, w, http.StatusBadRequest, "%s", err)
+		aghhttp.ErrorAndLog(ctx, l, r, w, http.StatusBadRequest, "%s", err)
 
 		return
 	}
 
 	if utf8.RuneCountInString(req.Password) < PasswordMinRunes {
-		aghhttp.Error(
+		aghhttp.ErrorAndLog(
+			ctx,
+			l,
 			r,
 			w,
 			http.StatusUnprocessableEntity,
@@ -415,27 +449,47 @@ func (web *webAPI) handleInstallConfigure(w http.ResponseWriter, r *http.Request
 
 	err = aghnet.CheckPort("udp", netip.AddrPortFrom(req.DNS.IP, req.DNS.Port))
 	if err != nil {
-		aghhttp.Error(r, w, http.StatusBadRequest, "%s", err)
+		aghhttp.ErrorAndLog(ctx, l, r, w, http.StatusBadRequest, "%s", err)
 
 		return
 	}
 
 	err = aghnet.CheckPort("tcp", netip.AddrPortFrom(req.DNS.IP, req.DNS.Port))
 	if err != nil {
-		aghhttp.Error(r, w, http.StatusBadRequest, "%s", err)
+		aghhttp.ErrorAndLog(ctx, l, r, w, http.StatusBadRequest, "%s", err)
 
 		return
 	}
 
+	web.finalizeInstall(ctx, w, r, req, restartHTTP)
+}
+
+// finalizeInstall completes first-run setup by applying user-provided settings.
+// w, r, and req must not be nil.
+func (web *webAPI) finalizeInstall(
+	ctx context.Context,
+	w http.ResponseWriter,
+	r *http.Request,
+	req *applyConfigReq,
+	restartHTTP bool,
+) {
+	l := web.logger
+
+	var err error
 	curConfig := &configuration{}
 	copyInstallSettings(curConfig, config)
 
-	globalContext.firstRun = false
+	defer func() {
+		if err != nil {
+			copyInstallSettings(config, curConfig)
+		}
+	}()
+
 	config.DNS.BindHosts = []netip.Addr{req.DNS.IP}
 	config.DNS.Port = req.DNS.Port
 	config.Filtering.Logger = web.baseLogger.With(slogutil.KeyPrefix, "filtering")
 	config.Filtering.SafeFSPatterns = []string{
-		filepath.Join(globalContext.workDir, userFilterDataDir, "*"),
+		filepath.Join(web.conf.workDir, userFilterDataDir, "*"),
 	}
 	config.HTTPConfig.Address = netip.AddrPortFrom(req.Web.IP, req.Web.Port)
 
@@ -444,9 +498,7 @@ func (web *webAPI) handleInstallConfigure(w http.ResponseWriter, r *http.Request
 	}
 	err = web.auth.addUser(ctx, u, req.Password)
 	if err != nil {
-		globalContext.firstRun = true
-		copyInstallSettings(config, curConfig)
-		aghhttp.Error(r, w, http.StatusUnprocessableEntity, "%s", err)
+		aghhttp.ErrorAndLog(ctx, l, r, w, http.StatusUnprocessableEntity, "%s", err)
 
 		return
 	}
@@ -455,20 +507,38 @@ func (web *webAPI) handleInstallConfigure(w http.ResponseWriter, r *http.Request
 	// moment we'll allow setting up TLS in the initial configuration or the
 	// configuration itself will use HTTPS protocol, because the underlying
 	// functions potentially restart the HTTPS server.
-	err = startMods(ctx, web.baseLogger, web.tlsManager)
+	err = startMods(
+		ctx,
+		web.baseLogger,
+		web.tlsManager,
+		web.confModifier,
+		web.httpReg,
+		web.conf.workDir,
+	)
 	if err != nil {
-		globalContext.firstRun = true
-		copyInstallSettings(config, curConfig)
-		aghhttp.Error(r, w, http.StatusInternalServerError, "%s", err)
+		aghhttp.ErrorAndLog(ctx, l, r, w, http.StatusInternalServerError, "%s", err)
 
 		return
 	}
 
-	err = config.write(web.tlsManager, web.auth)
+	err = config.write(
+		ctx,
+		web.logger,
+		web.tlsManager,
+		web.auth,
+		web.conf.workDir,
+		web.conf.confPath,
+	)
 	if err != nil {
-		globalContext.firstRun = true
-		copyInstallSettings(config, curConfig)
-		aghhttp.Error(r, w, http.StatusInternalServerError, "Couldn't write config: %s", err)
+		aghhttp.ErrorAndLog(
+			ctx,
+			l,
+			r,
+			w,
+			http.StatusInternalServerError,
+			"Couldn't write config: %s",
+			err,
+		)
 
 		return
 	}
@@ -476,11 +546,14 @@ func (web *webAPI) handleInstallConfigure(w http.ResponseWriter, r *http.Request
 	web.conf.firstRun = false
 	web.conf.BindAddr = netip.AddrPortFrom(req.Web.IP, req.Web.Port)
 
-	registerControlHandlers(web)
+	web.registerControlHandlers()
 
-	aghhttp.OK(w)
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
+	aghhttp.OK(ctx, l, w)
+
+	rc := http.NewResponseController(w)
+	err = rc.Flush()
+	if err != nil {
+		l.WarnContext(ctx, "flushing response", slogutil.KeyError, err)
 	}
 
 	if !restartHTTP {
@@ -492,10 +565,10 @@ func (web *webAPI) handleInstallConfigure(w http.ResponseWriter, r *http.Request
 	// and will be blocked by it's own caller.
 	go func(timeout time.Duration) {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
-		defer slogutil.RecoverAndLog(shutdownCtx, web.logger)
+		defer slogutil.RecoverAndLog(shutdownCtx, l)
 		defer cancel()
 
-		shutdownSrv(shutdownCtx, web.logger, web.httpServer)
+		shutdownSrv(shutdownCtx, l, web.httpServer)
 	}(shutdownTimeout)
 }
 
@@ -531,14 +604,21 @@ func decodeApplyConfigReq(r io.Reader) (req *applyConfigReq, restartHTTP bool, e
 }
 
 // startMods initializes and starts the DNS server after installation.
-// baseLogger and tlsMgr must not be nil.
-func startMods(ctx context.Context, baseLogger *slog.Logger, tlsMgr *tlsManager) (err error) {
-	statsDir, querylogDir, err := checkStatsAndQuerylogDirs(&globalContext, config)
+// baseLogger, tlsMgr, confModifier, and httpReg must not be nil.
+func startMods(
+	ctx context.Context,
+	baseLogger *slog.Logger,
+	tlsMgr *tlsManager,
+	confModifier agh.ConfigModifier,
+	httpReg aghhttp.Registrar,
+	workDir string,
+) (err error) {
+	statsDir, querylogDir, err := checkStatsAndQuerylogDirs(config, workDir)
 	if err != nil {
 		return err
 	}
 
-	err = initDNS(baseLogger, tlsMgr, statsDir, querylogDir)
+	err = initDNS(ctx, baseLogger, tlsMgr, confModifier, httpReg, statsDir, querylogDir)
 	if err != nil {
 		return err
 	}
@@ -547,7 +627,7 @@ func startMods(ctx context.Context, baseLogger *slog.Logger, tlsMgr *tlsManager)
 
 	err = startDNSServer()
 	if err != nil {
-		closeDNSServer()
+		closeDNSServer(ctx)
 
 		return err
 	}
@@ -555,8 +635,20 @@ func startMods(ctx context.Context, baseLogger *slog.Logger, tlsMgr *tlsManager)
 	return nil
 }
 
+// registerInstallHandlers registers install handlers.
 func (web *webAPI) registerInstallHandlers() {
-	globalContext.mux.HandleFunc("/control/install/get_addresses", preInstall(ensureGET(web.handleInstallGetAddresses)))
-	globalContext.mux.HandleFunc("/control/install/check_config", preInstall(ensurePOST(web.handleInstallCheckConfig)))
-	globalContext.mux.HandleFunc("/control/install/configure", preInstall(ensurePOST(web.handleInstallConfigure)))
+	mux := web.conf.mux
+
+	mux.Handle(
+		http.MethodGet+" "+"/control/install/get_addresses",
+		web.preInstallHandler(http.HandlerFunc(web.handleInstallGetAddresses)),
+	)
+	mux.Handle(
+		"/control/install/check_config",
+		web.preInstallHandler(web.ensure(http.MethodPost, web.handleInstallCheckConfig)),
+	)
+	mux.Handle(
+		"/control/install/configure",
+		web.preInstallHandler(web.ensure(http.MethodPost, web.handleInstallConfigure)),
+	)
 }

@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AdguardTeam/AdGuardHome/internal/agh"
 	"github.com/AdguardTeam/AdGuardHome/internal/aghalg"
 	"github.com/AdguardTeam/AdGuardHome/internal/aghhttp"
 	"github.com/AdguardTeam/AdGuardHome/internal/aghnet"
@@ -56,11 +57,14 @@ type tlsManager struct {
 	// conf contains the TLS configuration settings.  It must not be nil.
 	conf *tlsConfigSettings
 
-	// configModified is called when the TLS configuration is changed via an
-	// HTTP request.
-	configModified func()
+	// confModifier is used to update the global configuration.
+	confModifier agh.ConfigModifier
 
-	// customCipherIDs are the ID of the cipher suites that AdGuard Home must use.
+	// httpReg registers HTTP handlers.  It must not be nil.
+	httpReg aghhttp.Registrar
+
+	// customCipherIDs are the IDs of the cipher suites that AdGuard Home must
+	// use.
 	customCipherIDs []uint16
 
 	// servePlainDNS defines if plain DNS is allowed for incoming requests.
@@ -73,9 +77,11 @@ type tlsManagerConfig struct {
 	// be nil.
 	logger *slog.Logger
 
-	// configModified is called when the TLS configuration is changed via an
-	// HTTP request.  It must not be nil.
-	configModified func()
+	// confModifier is used to update the global configuration.  It must not be
+	// nil.
+	confModifier agh.ConfigModifier
+
+	httpReg aghhttp.Registrar
 
 	// tlsSettings contains the TLS configuration settings.
 	tlsSettings tlsConfigSettings
@@ -91,15 +97,16 @@ type tlsManagerConfig struct {
 // [tlsManager.setWebAPI].
 func newTLSManager(ctx context.Context, conf *tlsManagerConfig) (m *tlsManager, err error) {
 	m = &tlsManager{
-		logger:         conf.logger,
-		mu:             &sync.Mutex{},
-		configModified: conf.configModified,
-		status:         &tlsConfigStatus{},
-		conf:           &conf.tlsSettings,
-		servePlainDNS:  conf.servePlainDNS,
+		logger:        conf.logger,
+		mu:            &sync.Mutex{},
+		confModifier:  conf.confModifier,
+		httpReg:       conf.httpReg,
+		status:        &tlsConfigStatus{},
+		conf:          &conf.tlsSettings,
+		servePlainDNS: conf.servePlainDNS,
 	}
 
-	m.rootCerts = aghtls.SystemRootCAs()
+	m.rootCerts = aghtls.SystemRootCAs(ctx, conf.logger)
 
 	if len(conf.tlsSettings.OverrideTLSCiphers) > 0 {
 		m.customCipherIDs, err = aghtls.ParseCiphers(config.TLS.OverrideTLSCiphers)
@@ -232,7 +239,7 @@ func (m *tlsManager) reload(ctx context.Context) {
 
 	m.certLastMod = fi.ModTime().UTC()
 
-	err = m.reconfigureDNSServer()
+	err = m.reconfigureDNSServer(ctx)
 	if err != nil {
 		m.logger.ErrorContext(ctx, "reconfiguring dns server", slogutil.KeyError, err)
 	}
@@ -245,20 +252,21 @@ func (m *tlsManager) reload(ctx context.Context) {
 
 // reconfigureDNSServer updates the DNS server configuration using the stored
 // TLS settings.  m.mu is expected to be locked.
-func (m *tlsManager) reconfigureDNSServer() (err error) {
+func (m *tlsManager) reconfigureDNSServer(ctx context.Context) (err error) {
 	newConf, err := newServerConfig(
 		&config.DNS,
 		config.Clients.Sources,
 		m.conf,
 		m,
-		httpRegister,
+		m.httpReg,
 		globalContext.clients.storage,
+		m.confModifier,
 	)
 	if err != nil {
 		return fmt.Errorf("generating forwarding dns server config: %w", err)
 	}
 
-	err = globalContext.dnsServer.Reconfigure(newConf)
+	err = globalContext.dnsServer.Reconfigure(ctx, newConf)
 	if err != nil {
 		return fmt.Errorf("starting forwarding dns server: %w", err)
 	}
@@ -425,7 +433,7 @@ func (m *tlsManager) handleTLSStatus(w http.ResponseWriter, r *http.Request) {
 		servePlainDNS = m.servePlainDNS
 	}()
 
-	data := tlsConfig{
+	data := &tlsConfig{
 		tlsConfigSettingsExt: tlsConfigSettingsExt{
 			tlsConfigSettings: *tlsConf,
 			ServePlainDNS:     aghalg.BoolToNullBool(servePlainDNS),
@@ -433,7 +441,7 @@ func (m *tlsManager) handleTLSStatus(w http.ResponseWriter, r *http.Request) {
 		tlsConfigStatus: m.status,
 	}
 
-	marshalTLS(w, r, data)
+	m.marshalTLS(r.Context(), w, r, data)
 }
 
 // handleTLSValidate is the handler for the POST /control/tls/validate HTTP API.
@@ -442,7 +450,11 @@ func (m *tlsManager) handleTLSValidate(w http.ResponseWriter, r *http.Request) {
 
 	setts, err := unmarshalTLS(r)
 	if err != nil {
-		aghhttp.Error(r, w, http.StatusBadRequest, "Failed to unmarshal TLS config: %s", err)
+		// errFmt does not follow error message guidelines because it is sent
+		// directly to the frontend.
+		const errFmt = "Failed to unmarshal TLS config: %s"
+
+		aghhttp.ErrorAndLog(ctx, m.logger, r, w, http.StatusBadRequest, errFmt, err)
 
 		return
 	}
@@ -457,7 +469,7 @@ func (m *tlsManager) handleTLSValidate(w http.ResponseWriter, r *http.Request) {
 	if err = m.validateTLSSettings(setts); err != nil {
 		m.logger.InfoContext(ctx, "validating tls settings", slogutil.KeyError, err)
 
-		aghhttp.Error(r, w, http.StatusBadRequest, "%s", err)
+		aghhttp.ErrorAndLog(ctx, m.logger, r, w, http.StatusBadRequest, "%s", err)
 
 		return
 	}
@@ -466,12 +478,12 @@ func (m *tlsManager) handleTLSValidate(w http.ResponseWriter, r *http.Request) {
 	// status.WarningValidation.
 	status := &tlsConfigStatus{}
 	_ = m.loadTLSConfig(ctx, &setts.tlsConfigSettings, status)
-	resp := tlsConfig{
+	resp := &tlsConfig{
 		tlsConfigSettingsExt: setts,
 		tlsConfigStatus:      status,
 	}
 
-	marshalTLS(w, r, resp)
+	m.marshalTLS(ctx, w, r, resp)
 }
 
 // setConfig updates manager TLS configuration with the given one.  m.mu is
@@ -507,7 +519,15 @@ func (m *tlsManager) handleTLSConfigure(w http.ResponseWriter, r *http.Request) 
 
 	req, err := unmarshalTLS(r)
 	if err != nil {
-		aghhttp.Error(r, w, http.StatusBadRequest, "Failed to unmarshal TLS config: %s", err)
+		aghhttp.ErrorAndLog(
+			ctx,
+			m.logger,
+			r,
+			w,
+			http.StatusBadRequest,
+			"Failed to unmarshal TLS config: %s",
+			err,
+		)
 
 		return
 	}
@@ -515,7 +535,7 @@ func (m *tlsManager) handleTLSConfigure(w http.ResponseWriter, r *http.Request) 
 	var restartHTTPS bool
 	defer func() {
 		if restartHTTPS {
-			m.configModified()
+			m.confModifier.Apply(ctx)
 		}
 	}()
 
@@ -527,7 +547,7 @@ func (m *tlsManager) handleTLSConfigure(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err = m.validateTLSSettings(req); err != nil {
-		aghhttp.Error(r, w, http.StatusBadRequest, "%s", err)
+		aghhttp.ErrorAndLog(ctx, m.logger, r, w, http.StatusBadRequest, "%s", err)
 
 		return
 	}
@@ -535,12 +555,12 @@ func (m *tlsManager) handleTLSConfigure(w http.ResponseWriter, r *http.Request) 
 	status := &tlsConfigStatus{}
 	err = m.loadTLSConfig(ctx, &req.tlsConfigSettings, status)
 	if err != nil {
-		resp := tlsConfig{
+		resp := &tlsConfig{
 			tlsConfigSettingsExt: req,
 			tlsConfigStatus:      status,
 		}
 
-		marshalTLS(w, r, resp)
+		m.marshalTLS(ctx, w, r, resp)
 
 		return
 	}
@@ -557,21 +577,21 @@ func (m *tlsManager) handleTLSConfigure(w http.ResponseWriter, r *http.Request) 
 		}()
 	}
 
-	err = m.reconfigureDNSServer()
+	err = m.reconfigureDNSServer(ctx)
 	if err != nil {
 		m.logger.ErrorContext(ctx, "reconfiguring dns server", slogutil.KeyError, err)
 
-		aghhttp.Error(r, w, http.StatusInternalServerError, "%s", err)
+		aghhttp.ErrorAndLog(ctx, m.logger, r, w, http.StatusInternalServerError, "%s", err)
 
 		return
 	}
 
-	resp := tlsConfig{
+	resp := &tlsConfig{
 		tlsConfigSettingsExt: req,
 		tlsConfigStatus:      m.status,
 	}
 
-	marshalTLS(w, r, resp)
+	m.marshalTLS(ctx, w, r, resp)
 	rc := http.NewResponseController(w)
 	err = rc.Flush()
 	if err != nil {
@@ -906,11 +926,13 @@ func (m *tlsManager) validateCertificate(
 	certChain []byte,
 	serverName string,
 ) (ok bool, err error) {
+	// parseErr is a non-critical parse warning.
+	var parseErr error
 	var certs []*x509.Certificate
-	certs, status.ValidCert, err = m.parseCertChain(ctx, certChain)
+	certs, status.ValidCert, parseErr = m.parseCertChain(ctx, certChain)
 	if !status.ValidCert {
 		// Don't wrap the error, since it's informative enough as is.
-		return false, err
+		return false, parseErr
 	}
 
 	mainCert := certs[0]
@@ -929,7 +951,8 @@ func (m *tlsManager) validateCertificate(
 
 	status.ValidChain = true
 
-	return true, nil
+	// Propagate the non-critical parse warning.
+	return true, parseErr
 }
 
 // Key types.
@@ -1011,7 +1034,14 @@ func unmarshalTLS(r *http.Request) (tlsConfigSettingsExt, error) {
 	return data, nil
 }
 
-func marshalTLS(w http.ResponseWriter, r *http.Request, data tlsConfig) {
+// marshalTLS encodes sensitive fields and writes data as JSON.  All arguments
+// must not be nil.
+func (m *tlsManager) marshalTLS(
+	ctx context.Context,
+	w http.ResponseWriter,
+	r *http.Request,
+	data *tlsConfig,
+) {
 	if data.CertificateChain != "" {
 		encoded := base64.StdEncoding.EncodeToString([]byte(data.CertificateChain))
 		data.CertificateChain = encoded
@@ -1022,12 +1052,12 @@ func marshalTLS(w http.ResponseWriter, r *http.Request, data tlsConfig) {
 		data.PrivateKey = ""
 	}
 
-	aghhttp.WriteJSONResponseOK(w, r, data)
+	aghhttp.WriteJSONResponseOK(ctx, m.logger, w, r, *data)
 }
 
 // registerWebHandlers registers HTTP handlers for TLS configuration.
 func (m *tlsManager) registerWebHandlers() {
-	httpRegister(http.MethodGet, "/control/tls/status", m.handleTLSStatus)
-	httpRegister(http.MethodPost, "/control/tls/configure", m.handleTLSConfigure)
-	httpRegister(http.MethodPost, "/control/tls/validate", m.handleTLSValidate)
+	m.httpReg.Register(http.MethodGet, "/control/tls/status", m.handleTLSStatus)
+	m.httpReg.Register(http.MethodPost, "/control/tls/configure", m.handleTLSConfigure)
+	m.httpReg.Register(http.MethodPost, "/control/tls/validate", m.handleTLSValidate)
 }

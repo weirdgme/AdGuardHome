@@ -32,7 +32,7 @@ func initBlockedServices(ctx context.Context, l *slog.Logger) {
 	for i, s := range blockedServices {
 		netRules := make([]*rules.NetworkRule, 0, len(s.Rules))
 		for _, text := range s.Rules {
-			rule, err := rules.NewNetworkRule(text, rulelist.URLFilterIDBlockedService)
+			rule, err := rules.NewNetworkRule(text, rulelist.IDBlockedService)
 			if err == nil {
 				netRules = append(netRules, rule)
 
@@ -127,14 +127,16 @@ func (d *DNSFilter) ApplyBlockedServicesList(setts *Settings, list []string) {
 }
 
 func (d *DNSFilter) handleBlockedServicesIDs(w http.ResponseWriter, r *http.Request) {
-	aghhttp.WriteJSONResponseOK(w, r, serviceIDs)
+	aghhttp.WriteJSONResponseOK(r.Context(), d.logger, w, r, serviceIDs)
 }
 
 func (d *DNSFilter) handleBlockedServicesAll(w http.ResponseWriter, r *http.Request) {
-	aghhttp.WriteJSONResponseOK(w, r, struct {
+	aghhttp.WriteJSONResponseOK(r.Context(), d.logger, w, r, struct {
 		BlockedServices []blockedService `json:"blocked_services"`
+		ServiceGroups   []serviceGroup   `json:"groups"`
 	}{
 		BlockedServices: blockedServices,
+		ServiceGroups:   serviceGroups,
 	})
 }
 
@@ -151,7 +153,7 @@ func (d *DNSFilter) handleBlockedServicesList(w http.ResponseWriter, r *http.Req
 		list = d.conf.BlockedServices.IDs
 	}()
 
-	aghhttp.WriteJSONResponseOK(w, r, list)
+	aghhttp.WriteJSONResponseOK(r.Context(), d.logger, w, r, list)
 }
 
 // handleBlockedServicesSet is the handler for the POST
@@ -159,10 +161,12 @@ func (d *DNSFilter) handleBlockedServicesList(w http.ResponseWriter, r *http.Req
 //
 // Deprecated:  Use handleBlockedServicesUpdate.
 func (d *DNSFilter) handleBlockedServicesSet(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
 	list := []string{}
 	err := json.NewDecoder(r.Body).Decode(&list)
 	if err != nil {
-		aghhttp.Error(r, w, http.StatusBadRequest, "json.Decode: %s", err)
+		aghhttp.ErrorAndLog(ctx, d.logger, r, w, http.StatusBadRequest, "json.Decode: %s", err)
 
 		return
 	}
@@ -172,10 +176,10 @@ func (d *DNSFilter) handleBlockedServicesSet(w http.ResponseWriter, r *http.Requ
 		defer d.confMu.Unlock()
 
 		d.conf.BlockedServices.IDs = list
-		d.logger.DebugContext(r.Context(), "updated blocked services list", "len", len(list))
+		d.logger.DebugContext(ctx, "updated blocked services list", "len", len(list))
 	}()
 
-	d.conf.ConfigModified()
+	d.conf.ConfModifier.Apply(ctx)
 }
 
 // handleBlockedServicesGet is the handler for the GET
@@ -189,23 +193,26 @@ func (d *DNSFilter) handleBlockedServicesGet(w http.ResponseWriter, r *http.Requ
 		bsvc = d.conf.BlockedServices.Clone()
 	}()
 
-	aghhttp.WriteJSONResponseOK(w, r, bsvc)
+	aghhttp.WriteJSONResponseOK(r.Context(), d.logger, w, r, bsvc)
 }
 
 // handleBlockedServicesUpdate is the handler for the PUT
 // /control/blocked_services/update HTTP API.
 func (d *DNSFilter) handleBlockedServicesUpdate(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	l := d.logger
+
 	bsvc := &BlockedServices{}
 	err := json.NewDecoder(r.Body).Decode(bsvc)
 	if err != nil {
-		aghhttp.Error(r, w, http.StatusBadRequest, "json.Decode: %s", err)
+		aghhttp.ErrorAndLog(ctx, l, r, w, http.StatusBadRequest, "json.Decode: %s", err)
 
 		return
 	}
 
 	err = bsvc.Validate()
 	if err != nil {
-		aghhttp.Error(r, w, http.StatusUnprocessableEntity, "validating: %s", err)
+		aghhttp.ErrorAndLog(ctx, l, r, w, http.StatusUnprocessableEntity, "validating: %s", err)
 
 		return
 	}
@@ -221,7 +228,7 @@ func (d *DNSFilter) handleBlockedServicesUpdate(w http.ResponseWriter, r *http.R
 		d.conf.BlockedServices = bsvc
 	}()
 
-	d.logger.DebugContext(r.Context(), "updated blocked services schedule", "len", len(bsvc.IDs))
+	l.DebugContext(ctx, "updated blocked services schedule", "len", len(bsvc.IDs))
 
-	d.conf.ConfigModified()
+	d.conf.ConfModifier.Apply(ctx)
 }

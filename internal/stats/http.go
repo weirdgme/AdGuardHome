@@ -51,6 +51,7 @@ func (s *StatsCtx) handleStats(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	ctx := r.Context()
+	l := s.logger
 
 	var (
 		resp *StatsResp
@@ -63,18 +64,18 @@ func (s *StatsCtx) handleStats(w http.ResponseWriter, r *http.Request) {
 		resp, ok = s.getData(uint32(s.limit.Hours()))
 	}()
 
-	s.logger.DebugContext(ctx, "prepared data", "elapsed", time.Since(start))
+	l.DebugContext(ctx, "prepared data", "elapsed", time.Since(start))
 
 	if !ok {
 		// Don't bring the message to the lower case since it's a part of UI
 		// text for the moment.
 		const msg = "Couldn't get statistics data"
-		aghhttp.ErrorAndLog(ctx, s.logger, r, w, http.StatusInternalServerError, msg)
+		aghhttp.ErrorAndLog(ctx, l, r, w, http.StatusInternalServerError, msg)
 
 		return
 	}
 
-	aghhttp.WriteJSONResponseOK(w, r, resp)
+	aghhttp.WriteJSONResponseOK(ctx, l, w, r, resp)
 }
 
 // configResp is the response to the GET /control/stats_info.
@@ -123,7 +124,7 @@ func (s *StatsCtx) handleStatsInfo(w http.ResponseWriter, r *http.Request) {
 		resp.IntervalDays = 0
 	}
 
-	aghhttp.WriteJSONResponseOK(w, r, resp)
+	aghhttp.WriteJSONResponseOK(r.Context(), s.logger, w, r, resp)
 }
 
 // handleGetStatsConfig is the handler for the GET /control/stats/config HTTP
@@ -141,7 +142,7 @@ func (s *StatsCtx) handleGetStatsConfig(w http.ResponseWriter, r *http.Request) 
 		}
 	}()
 
-	aghhttp.WriteJSONResponseOK(w, r, resp)
+	aghhttp.WriteJSONResponseOK(r.Context(), s.logger, w, r, resp)
 }
 
 // handleStatsConfig is the handler for the POST /control/stats_config HTTP API.
@@ -166,7 +167,7 @@ func (s *StatsCtx) handleStatsConfig(w http.ResponseWriter, r *http.Request) {
 
 	limit := time.Duration(reqData.IntervalDays) * timeutil.Day
 
-	defer s.configModified()
+	defer s.configModifier.Apply(ctx)
 
 	s.confMu.Lock()
 	defer s.confMu.Unlock()
@@ -216,7 +217,7 @@ func (s *StatsCtx) handlePutStatsConfig(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	defer s.configModified()
+	defer s.configModifier.Apply(ctx)
 
 	s.confMu.Lock()
 	defer s.confMu.Unlock()
@@ -244,16 +245,12 @@ func (s *StatsCtx) handleStatsReset(w http.ResponseWriter, r *http.Request) {
 
 // initWeb registers the handlers for web endpoints of statistics module.
 func (s *StatsCtx) initWeb() {
-	if s.httpRegister == nil {
-		return
-	}
-
-	s.httpRegister(http.MethodGet, "/control/stats", s.handleStats)
-	s.httpRegister(http.MethodPost, "/control/stats_reset", s.handleStatsReset)
-	s.httpRegister(http.MethodGet, "/control/stats/config", s.handleGetStatsConfig)
-	s.httpRegister(http.MethodPut, "/control/stats/config/update", s.handlePutStatsConfig)
+	s.httpReg.Register(http.MethodGet, "/control/stats", s.handleStats)
+	s.httpReg.Register(http.MethodPost, "/control/stats_reset", s.handleStatsReset)
+	s.httpReg.Register(http.MethodGet, "/control/stats/config", s.handleGetStatsConfig)
+	s.httpReg.Register(http.MethodPut, "/control/stats/config/update", s.handlePutStatsConfig)
 
 	// Deprecated handlers.
-	s.httpRegister(http.MethodGet, "/control/stats_info", s.handleStatsInfo)
-	s.httpRegister(http.MethodPost, "/control/stats_config", s.handleStatsConfig)
+	s.httpReg.Register(http.MethodGet, "/control/stats_info", s.handleStatsInfo)
+	s.httpReg.Register(http.MethodPost, "/control/stats_config", s.handleStatsConfig)
 }
