@@ -14,7 +14,6 @@ import (
 
 	"github.com/AdguardTeam/golibs/errors"
 	"github.com/AdguardTeam/golibs/netutil"
-	"github.com/google/gopacket"
 )
 
 // DHCPServer is a DHCP server for both IPv4 and IPv6 address families.
@@ -28,21 +27,12 @@ type DHCPServer struct {
 	// logger logs common DHCP events.
 	logger *slog.Logger
 
-	// packetSource is the source of DHCP packets to process.
-	//
-	// TODO(e.burkov):  Implement and set.
-	packetSource gopacket.PacketSource
+	// deviceManager is the manager of network devices.
+	deviceManager NetworkDeviceManager
 
 	// localTLD is the top-level domain name to use for resolving DHCP clients'
 	// hostnames.
 	localTLD string
-
-	// dbFilePath is the path to the database file containing the DHCP leases.
-	//
-	// TODO(e.burkov):  Consider extracting the database logic into a separate
-	// interface to prevent packages that only need lease data from depending on
-	// the entire server and to simplify testing.
-	dbFilePath string
 
 	// leasesMu protects the leases index as well as leases in the interfaces.
 	leasesMu *sync.RWMutex
@@ -73,24 +63,22 @@ func New(ctx context.Context, conf *Config) (srv *DHCPServer, err error) {
 		return nil, nil
 	}
 
-	ifaces4, ifaces6 := newInterfaces(ctx, l, conf.Interfaces)
-
 	enabled := &atomic.Bool{}
 	enabled.Store(conf.Enabled)
 
 	srv = &DHCPServer{
-		enabled:     enabled,
-		logger:      l,
-		localTLD:    conf.LocalDomainName,
-		leasesMu:    &sync.RWMutex{},
-		leases:      newLeaseIndex(),
-		interfaces4: ifaces4,
-		interfaces6: ifaces6,
-		icmpTimeout: conf.ICMPTimeout,
-		dbFilePath:  conf.DBFilePath,
+		enabled:       enabled,
+		logger:        l,
+		deviceManager: conf.NetworkDeviceManager,
+		localTLD:      conf.LocalDomainName,
+		leasesMu:      &sync.RWMutex{},
+		leases:        newLeaseIndex(conf.DBFilePath),
+		icmpTimeout:   conf.ICMPTimeout,
 	}
 
-	err = srv.dbLoad(ctx)
+	srv.interfaces4, srv.interfaces6 = srv.newInterfaces(ctx, l, conf.Interfaces)
+
+	err = srv.leases.dbLoad(ctx, l, srv.interfaces4, srv.interfaces6)
 	if err != nil {
 		// Don't wrap the error since it's informative enough as is.
 		return nil, err
@@ -101,7 +89,7 @@ func New(ctx context.Context, conf *Config) (srv *DHCPServer, err error) {
 
 // newInterfaces creates interfaces for the given map of interface names to
 // their configurations.  ifaces must be valid, baseLogger must not be nil.
-func newInterfaces(
+func (srv *DHCPServer) newInterfaces(
 	ctx context.Context,
 	baseLogger *slog.Logger,
 	ifaces map[string]*InterfaceConfig,
@@ -114,7 +102,7 @@ func newInterfaces(
 		iface := ifaces[name]
 		ifaceLogger := baseLogger.With(keyInterface, name)
 
-		iface4 := newDHCPInterfaceV4(
+		iface4 := srv.newDHCPInterfaceV4(
 			ctx,
 			ifaceLogger.With(keyFamily, netutil.AddrFamilyIPv4),
 			name,
@@ -124,7 +112,7 @@ func newInterfaces(
 			v4 = append(v4, iface4)
 		}
 
-		iface6 := newDHCPInterfaceV6(
+		iface6 := srv.newDHCPInterfaceV6(
 			ctx,
 			ifaceLogger.With(keyFamily, netutil.AddrFamilyIPv6),
 			name,
@@ -147,13 +135,27 @@ func newInterfaces(
 func (srv *DHCPServer) Start(ctx context.Context) (err error) {
 	srv.logger.DebugContext(ctx, "starting dhcp server")
 
-	// TODO(e.burkov):  Listen to configured interfaces.
+	var errs []error
+	for _, iface := range srv.interfaces4 {
+		var nd NetworkDevice
+		nd, err = srv.deviceManager.Open(ctx, &NetworkDeviceConfig{
+			Name: iface.common.name,
+		})
+		if err != nil {
+			errs = append(errs, err)
 
-	go srv.serve(context.WithoutCancel(ctx))
+			continue
+		}
 
-	return nil
+		go srv.serveEther4(context.WithoutCancel(ctx), iface, nd)
+	}
+
+	// TODO(e.burkov):  Serve EthernetTypeIPv6.
+
+	return errors.Join(errs...)
 }
 
+// Shutdown implements the [Interface] interface for *DHCPServer.
 func (srv *DHCPServer) Shutdown(ctx context.Context) (err error) {
 	srv.logger.DebugContext(ctx, "shutting down dhcp server")
 
@@ -222,8 +224,13 @@ func (srv *DHCPServer) Reset(ctx context.Context) (err error) {
 	srv.leasesMu.Lock()
 	defer srv.leasesMu.Unlock()
 
-	srv.resetLeases()
-	err = srv.dbStore(ctx)
+	for _, iface := range srv.interfaces4 {
+		iface.common.reset()
+	}
+	for _, iface := range srv.interfaces6 {
+		iface.common.reset()
+	}
+	err = srv.leases.clear(ctx, srv.logger)
 	if err != nil {
 		// Don't wrap the error since there is already an annotation deferred.
 		return err
@@ -234,24 +241,12 @@ func (srv *DHCPServer) Reset(ctx context.Context) (err error) {
 	return nil
 }
 
-// resetLeases resets the leases for all network interfaces of the server.  It
-// expects the DHCPServer.leasesMu to be locked.
-func (srv *DHCPServer) resetLeases() {
-	for _, iface := range srv.interfaces4 {
-		iface.common.reset()
-	}
-	for _, iface := range srv.interfaces6 {
-		iface.common.reset()
-	}
-	srv.leases.clear()
-}
-
 // AddLease implements the [Interface] interface for *DHCPServer.
 func (srv *DHCPServer) AddLease(ctx context.Context, l *Lease) (err error) {
 	defer func() { err = errors.Annotate(err, "adding lease: %w") }()
 
 	addr := l.IP
-	iface, err := srv.ifaceForAddr(addr)
+	iface, err := ifaceForAddr(addr, srv.interfaces4, srv.interfaces6)
 	if err != nil {
 		// Don't wrap the error since it's already informative enough as is.
 		return err
@@ -260,15 +255,9 @@ func (srv *DHCPServer) AddLease(ctx context.Context, l *Lease) (err error) {
 	srv.leasesMu.Lock()
 	defer srv.leasesMu.Unlock()
 
-	err = srv.leases.add(l, iface)
+	err = srv.leases.add(ctx, srv.logger, l, iface)
 	if err != nil {
 		// Don't wrap the error since there is already an annotation deferred.
-		return err
-	}
-
-	err = srv.dbStore(ctx)
-	if err != nil {
-		// Don't wrap the error since it's already informative enough as is.
 		return err
 	}
 
@@ -290,7 +279,7 @@ func (srv *DHCPServer) UpdateStaticLease(ctx context.Context, l *Lease) (err err
 	defer func() { err = errors.Annotate(err, "updating static lease: %w") }()
 
 	addr := l.IP
-	iface, err := srv.ifaceForAddr(addr)
+	iface, err := ifaceForAddr(addr, srv.interfaces4, srv.interfaces6)
 	if err != nil {
 		// Don't wrap the error since it's already informative enough as is.
 		return err
@@ -299,15 +288,9 @@ func (srv *DHCPServer) UpdateStaticLease(ctx context.Context, l *Lease) (err err
 	srv.leasesMu.Lock()
 	defer srv.leasesMu.Unlock()
 
-	err = srv.leases.update(l, iface)
+	err = srv.leases.update(ctx, srv.logger, l, iface)
 	if err != nil {
 		// Don't wrap the error since there is already an annotation deferred.
-		return err
-	}
-
-	err = srv.dbStore(ctx)
-	if err != nil {
-		// Don't wrap the error since it's already informative enough as is.
 		return err
 	}
 
@@ -327,7 +310,7 @@ func (srv *DHCPServer) RemoveLease(ctx context.Context, l *Lease) (err error) {
 	defer func() { err = errors.Annotate(err, "removing lease: %w") }()
 
 	addr := l.IP
-	iface, err := srv.ifaceForAddr(addr)
+	iface, err := ifaceForAddr(addr, srv.interfaces4, srv.interfaces6)
 	if err != nil {
 		// Don't wrap the error since it's already informative enough as is.
 		return err
@@ -336,15 +319,9 @@ func (srv *DHCPServer) RemoveLease(ctx context.Context, l *Lease) (err error) {
 	srv.leasesMu.Lock()
 	defer srv.leasesMu.Unlock()
 
-	err = srv.leases.remove(l, iface)
+	err = srv.leases.remove(ctx, srv.logger, l, iface)
 	if err != nil {
 		// Don't wrap the error since there is already an annotation deferred.
-		return err
-	}
-
-	err = srv.dbStore(ctx)
-	if err != nil {
-		// Don't wrap the error since it's already informative enough as is.
 		return err
 	}
 
@@ -366,7 +343,7 @@ func (srv *DHCPServer) RemoveLease(ctx context.Context, l *Lease) (err error) {
 func (srv *DHCPServer) removeLeaseByAddr(ctx context.Context, addr netip.Addr) (err error) {
 	defer func() { err = errors.Annotate(err, "removing lease by address: %w") }()
 
-	iface, err := srv.ifaceForAddr(addr)
+	iface, err := ifaceForAddr(addr, srv.interfaces4, srv.interfaces6)
 	if err != nil {
 		// Don't wrap the error since it's already informative enough as is.
 		return err
@@ -380,15 +357,9 @@ func (srv *DHCPServer) removeLeaseByAddr(ctx context.Context, addr netip.Addr) (
 		return fmt.Errorf("no lease for ip %s", addr)
 	}
 
-	err = srv.leases.remove(l, iface)
+	err = srv.leases.remove(ctx, srv.logger, l, iface)
 	if err != nil {
 		// Don't wrap the error since there is already an annotation deferred.
-		return err
-	}
-
-	err = srv.dbStore(ctx)
-	if err != nil {
-		// Don't wrap the error since it's already informative enough as is.
 		return err
 	}
 
@@ -405,12 +376,18 @@ func (srv *DHCPServer) removeLeaseByAddr(ctx context.Context, addr netip.Addr) (
 
 // ifaceForAddr returns the handled network interface for the given IP address,
 // or an error if no such interface exists.
-func (srv *DHCPServer) ifaceForAddr(addr netip.Addr) (iface *netInterface, err error) {
+//
+// TODO(e.burkov):  Use a proper golibs error.
+func ifaceForAddr(
+	addr netip.Addr,
+	ifaces4 dhcpInterfacesV4,
+	ifaces6 dhcpInterfacesV6,
+) (iface *netInterface, err error) {
 	var ok bool
 	if addr.Is4() {
-		iface, ok = srv.interfaces4.find(addr)
+		iface, ok = ifaces4.find(addr)
 	} else {
-		iface, ok = srv.interfaces6.find(addr)
+		iface, ok = ifaces6.find(addr)
 	}
 	if !ok {
 		return nil, fmt.Errorf("no interface for ip %s", addr)

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/AdguardTeam/AdGuardHome/internal/agh"
 	"github.com/AdguardTeam/AdGuardHome/internal/aghalg"
@@ -409,6 +410,10 @@ type queryLogConfig struct {
 	// Enabled defines if the query log is enabled.
 	Enabled bool `yaml:"enabled"`
 
+	// IgnoredEnabled defines whether hosts from the ignored list should be
+	// ignored.
+	IgnoredEnabled bool `yaml:"ignored_enabled"`
+
 	// FileEnabled defines, if the query log is written to the file.
 	FileEnabled bool `yaml:"file_enabled"`
 }
@@ -426,6 +431,10 @@ type statsConfig struct {
 
 	// Enabled defines if the statistics are enabled.
 	Enabled bool `yaml:"enabled"`
+
+	// IgnoredEnabled defines whether hosts from the ignored list should be
+	// ignored.
+	IgnoredEnabled bool `yaml:"ignored_enabled"`
 }
 
 // Default block host constants.
@@ -465,8 +474,10 @@ var config = &configuration{
 			}, {
 				Prefix: netip.MustParsePrefix("::1/128"),
 			}},
-			CacheEnabled: true,
-			CacheSize:    4 * 1024 * 1024,
+			CacheEnabled:             true,
+			CacheSize:                4 * 1024 * 1024,
+			CacheOptimisticAnswerTTL: timeutil.Duration(30 * time.Second),
+			CacheOptimisticMaxAge:    timeutil.Duration(12 * time.Hour),
 
 			EDNSClientSubnet: &dnsforward.EDNSClientSubnet{
 				CustomIP:  netip.Addr{},
@@ -494,16 +505,18 @@ var config = &configuration{
 		PortDNSOverQUIC: defaultPortQUIC,
 	},
 	QueryLog: queryLogConfig{
-		Enabled:     true,
-		FileEnabled: true,
-		Interval:    timeutil.Duration(90 * timeutil.Day),
-		MemSize:     1000,
-		Ignored:     []string{},
+		Enabled:        true,
+		FileEnabled:    true,
+		Interval:       timeutil.Duration(90 * timeutil.Day),
+		MemSize:        1000,
+		Ignored:        []string{},
+		IgnoredEnabled: false,
 	},
 	Stats: statsConfig{
-		Enabled:  true,
-		Interval: timeutil.Duration(1 * timeutil.Day),
-		Ignored:  []string{},
+		Enabled:        true,
+		Interval:       timeutil.Duration(1 * timeutil.Day),
+		Ignored:        []string{},
+		IgnoredEnabled: false,
 	},
 	// NOTE: Keep these parameters in sync with the one put into
 	// client/src/helpers/filters/filters.ts by scripts/vetted-filters.
@@ -864,6 +877,7 @@ func (c *configuration) write(
 		config.Stats.Interval = timeutil.Duration(statsConf.Limit)
 		config.Stats.Enabled = statsConf.Enabled
 		config.Stats.Ignored = statsConf.Ignored.Values()
+		config.Stats.IgnoredEnabled = statsConf.Ignored.IsEnabled()
 	}
 
 	if globalContext.queryLog != nil {
@@ -875,6 +889,7 @@ func (c *configuration) write(
 		config.QueryLog.Interval = timeutil.Duration(dc.RotationIvl)
 		config.QueryLog.MemSize = dc.MemSize
 		config.QueryLog.Ignored = dc.Ignored.Values()
+		config.QueryLog.IgnoredEnabled = dc.Ignored.IsEnabled()
 	}
 
 	if globalContext.filters != nil {
